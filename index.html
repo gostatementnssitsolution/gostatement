@@ -2483,20 +2483,49 @@ function rowsToExcelHtml(rows, showCompany, showTerminal, title){
   </table>
   </body></html>`;
 }
+function mimeForFilename(filename){
+  if(filename.endsWith('.pdf')) return 'application/pdf';
+  if(filename.endsWith('.csv')) return 'text/csv;charset=utf-8';
+  if(filename.endsWith('.xls')) return 'application/vnd.ms-excel';
+  if(filename.endsWith('.json')) return 'application/json;charset=utf-8';
+  return 'application/octet-stream';
+}
+// PDF bytes are built as a JS string where each char code IS the byte value
+// (0-255) — everything else (CSV/Excel-HTML/JSON) is plain UTF-8 text.
+function toBlob(data, filename){
+  if(filename.endsWith('.pdf')){
+    const bytes = new Uint8Array(data.length);
+    for(let i=0;i<data.length;i++) bytes[i] = data.charCodeAt(i) & 0xff;
+    return new Blob([bytes], { type: mimeForFilename(filename) });
+  }
+  return new Blob([data], { type: mimeForFilename(filename) });
+}
 async function saveViaDownloads(data, filename){
+  // Inside a Claude Artifact preview, use its sandboxed downloads capability.
   try{
-    if(typeof claude === 'undefined' || !claude.use) throw new Error('no-runtime');
-    const downloads = await claude.use('downloads');
-    if(!downloads) throw new Error('not-granted');
-    await downloads.save({ filename, data });
+    if(typeof claude !== 'undefined' && claude.use){
+      const downloads = await claude.use('downloads');
+      if(downloads){ await downloads.save({ filename, data }); toast('Downloading ' + filename + '…'); return; }
+    }
+  }catch(e){ /* not running inside that sandbox — fall through to a normal browser download */ }
+
+  // Everywhere else (GitHub Pages, any real browser): a standard Blob + <a download> works natively.
+  try{
+    const blob = toBlob(data, filename);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 4000);
     toast('Downloading ' + filename + '…');
     return;
-  }catch(e){ /* fall through to clipboard fallback below */ }
+  }catch(e){ /* fall through to clipboard as a last resort */ }
+
   try{
     await navigator.clipboard.writeText(data);
-    toast('Download is not available in this preview — the file contents were copied to your clipboard instead.');
+    toast('Download failed — the file contents were copied to your clipboard instead.');
   }catch(e2){
-    toast('Download is not available in this preview.');
+    toast('Download failed and clipboard access was denied.');
   }
 }
 async function exportCsv(rows, showCompany, showTerminal, filename){ await saveViaDownloads(rowsToCsv(rows, showCompany, showTerminal), filename); }
