@@ -2312,10 +2312,28 @@ function openChangePasswordModal(){
     const n1 = document.getElementById('pwNew').value;
     const n2 = document.getElementById('pwNew2').value;
     const errEl = document.getElementById('pwErr');
+    errEl.style.display = 'none';
     const target = actor.type==='admin' ? actor.admin : actor.op;
+    if(n1 !== n2){ errEl.textContent='Password confirmation does not match.'; errEl.style.display='block'; return; }
+
+    // Cloud (Supabase Auth) account — passwordHash is null for these; verify
+    // the current password by signing in again, then update via Supabase.
+    if(window.GoStatementLive && target.passwordHash == null && target.email){
+      try{
+        await GoStatementLive.signIn(target.email, cur);
+        await GoStatementLive.completePasswordReset(n1);
+        closeModal();
+        toast('Password updated successfully.');
+      }catch(err){
+        errEl.textContent = 'Current password is incorrect.';
+        errEl.style.display = 'block';
+      }
+      return;
+    }
+
+    // Legacy local-hash account (pre-migration).
     const curHash = await sha256Hex(cur);
     if(curHash !== target.passwordHash){ errEl.textContent='Current password is incorrect.'; errEl.style.display='block'; return; }
-    if(n1 !== n2){ errEl.textContent='Password confirmation does not match.'; errEl.style.display='block'; return; }
     target.passwordHash = await sha256Hex(n1);
     target.mustChange = false;
     if(target.tempPasswordPlain) delete target.tempPasswordPlain;
