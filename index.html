@@ -1,0 +1,2738 @@
+<!doctype html>
+<meta charset="UTF-8">
+<title>GoStatement</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Source+Sans+3:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#f6f8fa; --surface:#ffffff; --surface-2:#f6f8fa; --border:#d0d7de;
+    --ink:#1f2328; --ink-soft:#59636e; --ink-faint:#818b98;
+    --brand:#0969da; --brand-ink:#ffffff; --brand-soft:#ddf4ff;
+    --accent:#0969da; --accent-ink:#ffffff; --accent-soft:#ddf4ff;
+    --good:#1a7f37; --good-soft:#dafbe1; --bad:#cf222e; --bad-soft:#ffebe9;
+    --sidebar:#24292f; --sidebar-ink:#d0d7de; --sidebar-ink-dim:#8b949e; --sidebar-active:#32383f;
+    --kt:#0969da; --kt-soft:#ddf4ff; --kt-ink:#0349a3;
+    --ms:#8250df; --ms-soft:#fbefff; --ms-ink:#6639ba;
+    --shadow: 0 1px 2px rgba(31,35,40,.06), 0 8px 24px -12px rgba(31,35,40,.16);
+    --radius:10px;
+    --font-display:'Manrope',ui-sans-serif,system-ui,sans-serif;
+    --font-body:'Source Sans 3',ui-sans-serif,system-ui,sans-serif;
+    --font-mono:'IBM Plex Mono',ui-monospace,'SFMono-Regular',Menlo,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0d1117; --surface:#161b22; --surface-2:#0d1117; --border:#30363d;
+      --ink:#e6edf3; --ink-soft:#9198a1; --ink-faint:#6e7681;
+      --brand:#4493f8; --brand-ink:#04101f; --brand-soft:#132a4d;
+      --accent:#4493f8; --accent-ink:#04101f; --accent-soft:#132a4d;
+      --good:#3fb950; --good-soft:#122117; --bad:#f85149; --bad-soft:#2d1214;
+      --sidebar:#010409; --sidebar-ink:#c9d1d9; --sidebar-ink-dim:#6e7681; --sidebar-active:#161b22;
+      --kt:#4493f8; --kt-soft:#132a4d; --kt-ink:#a8cdff;
+      --ms:#a371f7; --ms-soft:#2a1f45; --ms-ink:#d2b8ff;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 30px -12px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0d1117; --surface:#161b22; --surface-2:#0d1117; --border:#30363d;
+    --ink:#e6edf3; --ink-soft:#9198a1; --ink-faint:#6e7681;
+    --brand:#4493f8; --brand-ink:#04101f; --brand-soft:#132a4d;
+    --accent:#4493f8; --accent-ink:#04101f; --accent-soft:#132a4d;
+    --good:#3fb950; --good-soft:#122117; --bad:#f85149; --bad-soft:#2d1214;
+    --sidebar:#010409; --sidebar-ink:#c9d1d9; --sidebar-ink-dim:#6e7681; --sidebar-active:#161b22;
+    --kt:#4493f8; --kt-soft:#132a4d; --kt-ink:#a8cdff;
+    --ms:#a371f7; --ms-soft:#2a1f45; --ms-ink:#d2b8ff;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 30px -12px rgba(0,0,0,.6);
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg); color:var(--ink); font-family:var(--font-body);
+    font-size:15px; line-height:1.5; -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,h4{font-family:var(--font-display); margin:0; text-wrap:balance; color:var(--ink); letter-spacing:-.01em;}
+  p{margin:0;}
+  .num{font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-feature-settings:"tnum";}
+  a{color:inherit;}
+  button, input, select{font:inherit; color:inherit;}
+  ::selection{background:var(--accent-soft); color:var(--ink);}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:4px;}
+  .eyebrow{
+    font-size:11px; font-weight:700; letter-spacing:.11em; text-transform:uppercase;
+    color:var(--ink-faint);
+  }
+  .btn{
+    display:inline-flex; align-items:center; justify-content:center; gap:8px;
+    padding:10px 16px; border-radius:8px; border:1px solid var(--border);
+    background:var(--surface); color:var(--ink); font-weight:600; font-size:14px;
+    cursor:pointer; transition:filter .12s ease, transform .06s ease;
+  }
+  .btn:hover{filter:brightness(0.97);}
+  :root[data-theme="dark"] .btn:hover{filter:brightness(1.18);}
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .btn:hover{filter:brightness(1.18);} }
+  .btn:active{transform:translateY(1px);}
+  .btn-primary{background:var(--brand); color:var(--brand-ink); border-color:var(--brand);}
+  .btn-accent{background:var(--accent); color:var(--accent-ink); border-color:var(--accent);}
+  .btn-ghost{background:transparent; border-color:transparent;}
+  .btn-danger{background:transparent; border-color:var(--bad); color:var(--bad);}
+  .btn-sm{padding:7px 12px; font-size:13px; border-radius:7px;}
+  .btn:disabled{opacity:.5; cursor:not-allowed;}
+  /* Plain block-level control for native <input type=date> — never display:flex here.
+     Chrome/Edge render the calendar-picker-indicator as an internal shadow-DOM part;
+     forcing flex layout on the host input can squash or hide that icon so the
+     calendar never opens. Buttons use .btn; date inputs use this instead. */
+  .date-input{
+    padding:9px 12px; border-radius:8px; border:1px solid var(--border);
+    background:var(--surface); color:var(--ink); font-size:13px; font-family:inherit;
+    line-height:normal;
+  }
+  .date-input:focus{border-color:var(--accent);}
+  .field{display:flex; flex-direction:column; gap:6px;}
+  .field label{font-size:13px; font-weight:600; color:var(--ink-soft);}
+  .field input, .field select, .field textarea{
+    padding:10px 12px; border-radius:8px; border:1px solid var(--border);
+    background:var(--surface-2); color:var(--ink); font-size:14px; font-family:inherit;
+  }
+  .field textarea{resize:vertical;}
+  .field input:focus, .field select:focus, .field textarea:focus{border-color:var(--accent);}
+  .pw-wrap{position:relative;}
+  .pw-wrap input{width:100%; padding-right:40px;}
+  .pw-toggle{
+    position:absolute; right:4px; top:50%; transform:translateY(-50%); width:30px; height:30px;
+    display:flex; align-items:center; justify-content:center; background:none; border:none;
+    color:var(--ink-faint); cursor:pointer; border-radius:6px;
+  }
+  .pw-toggle:hover{background:var(--surface-2); color:var(--ink-soft);}
+  .field-row{display:grid; grid-template-columns:1fr 1fr; gap:12px;}
+  .card{
+    background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+    box-shadow:var(--shadow);
+  }
+  .pill{
+    display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px;
+    font-size:12px; font-weight:700; letter-spacing:.02em;
+  }
+  .pill-good{background:var(--good-soft); color:var(--good);}
+  .pill-bad{background:var(--bad-soft); color:var(--bad);}
+  .pill-neutral{background:var(--surface-2); color:var(--ink-soft); border:1px solid var(--border);}
+  .pill-accent{background:var(--accent-soft); color:var(--accent);}
+  .pill-kt{background:var(--kt-soft); color:var(--kt-ink);}
+  .pill-ms{background:var(--ms-soft); color:var(--ms-ink);}
+  .hidden{display:none !important;}
+  .scrollx{overflow-x:auto;}
+  table{border-collapse:collapse; width:100%; font-size:13.5px;}
+  th{
+    text-align:right; padding:10px 14px; font-size:11px; font-weight:700; letter-spacing:.07em;
+    text-transform:uppercase; color:var(--ink-faint); border-bottom:1px solid var(--border);
+    white-space:nowrap; position:sticky; top:0; background:var(--surface);
+  }
+  th:first-child, td:first-child{text-align:left;}
+  td{padding:10px 14px; border-bottom:1px solid var(--border); text-align:right; white-space:nowrap;}
+  tbody tr:hover{background:var(--surface-2);}
+  tbody tr.row-kt td:first-child{box-shadow:inset 3px 0 0 var(--kt);}
+  tbody tr.row-ms td:first-child{box-shadow:inset 3px 0 0 var(--ms);}
+  tfoot td{font-weight:700; border-top:2px solid var(--border); border-bottom:none; background:var(--surface-2);}
+
+  /* ---------- Login ---------- */
+  #login-screen{min-height:100vh; display:grid; grid-template-columns:1.05fr 1fr;}
+  @media (max-width:860px){ #login-screen{grid-template-columns:1fr;} #login-brand{display:none;} }
+  #login-brand{
+    background:
+      radial-gradient(600px 300px at 15% 0%, rgba(9,105,218,.22), transparent 60%),
+      radial-gradient(500px 260px at 90% 90%, rgba(130,80,223,.18), transparent 60%),
+      linear-gradient(175deg, var(--sidebar), #0a0d10 88%);
+    color:var(--sidebar-ink); padding:56px; display:flex; flex-direction:column; justify-content:space-between;
+    position:relative; overflow:hidden;
+  }
+  #gate-canvas{position:absolute; inset:0; width:100%; height:100%; opacity:.55;}
+  .brand-mark{display:flex; align-items:center; gap:10px; font-family:var(--font-display); font-weight:800; font-size:20px; color:#fff; position:relative; z-index:1;}
+  .brand-mark .dot{width:10px;height:10px;border-radius:3px;background:var(--brand);}
+  .brand-copy{position:relative; z-index:1; max-width:460px;}
+  .brand-copy h1{color:#fff; font-size:36px; line-height:1.15; margin-bottom:14px;}
+  .brand-copy p{color:var(--sidebar-ink-dim); font-size:15.5px; line-height:1.6;}
+  .brand-features{display:flex; flex-direction:column; gap:12px; position:relative; z-index:1; margin-top:36px;}
+  .brand-features .feature{display:flex; align-items:center; gap:10px; color:#fff; font-size:14px; font-weight:600;}
+  .brand-features .feature svg{width:18px; height:18px; color:var(--brand); flex-shrink:0;}
+  .brand-foot{position:relative; z-index:1; font-size:12px; color:var(--sidebar-ink-dim);}
+
+  #login-form-wrap{display:flex; align-items:center; justify-content:center; padding:32px; background:var(--bg);}
+  #login-form{width:100%; max-width:380px;}
+  #login-form h2{font-size:24px; margin-bottom:4px;}
+  #login-form .sub{color:var(--ink-soft); font-size:14.5px; margin-bottom:28px; display:block;}
+  #login-form form{display:flex; flex-direction:column; gap:16px; margin-bottom:18px;}
+  #login-error{
+    background:var(--bad-soft); color:var(--bad); border-radius:8px; padding:10px 12px;
+    font-size:13.5px; font-weight:600; display:none;
+  }
+  /* ---------- App shell ---------- */
+  #app{display:none; min-height:100vh; grid-template-columns:236px 1fr;}
+  #app.active{display:grid;}
+  #sidebar{
+    background:var(--sidebar); color:var(--sidebar-ink); padding:22px 16px; display:flex; flex-direction:column;
+    position:sticky; top:0; height:100vh;
+  }
+  #sidebar .brand-mark{margin-bottom:28px; padding:0 8px;}
+  .nav-group{margin-bottom:18px;}
+  .nav-label{font-size:10.5px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--sidebar-ink-dim); padding:0 10px; margin-bottom:8px;}
+  .nav-item{
+    display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:8px; font-size:14px;
+    font-weight:600; color:var(--sidebar-ink); cursor:pointer; margin-bottom:2px; border:none; background:transparent;
+    width:100%; text-align:left;
+  }
+  .nav-item svg{width:17px; height:17px; flex-shrink:0; opacity:.85;}
+  .nav-item:hover{background:rgba(255,255,255,.06);}
+  .nav-item.active{background:var(--sidebar-active); color:#fff;}
+  .nav-item.active svg{opacity:1;}
+  #sidebar-foot{margin-top:auto; padding-top:16px; border-top:1px solid rgba(255,255,255,.08);}
+  .who{display:flex; align-items:center; gap:10px; padding:8px 10px;}
+  .who .avatar{
+    width:34px; height:34px; border-radius:8px; background:var(--brand-soft); color:var(--brand);
+    display:flex; align-items:center; justify-content:center; font-weight:800; font-size:13px; flex-shrink:0;
+  }
+  .who .name{font-size:13.5px; font-weight:700; color:#fff; line-height:1.3;}
+  .who .role{font-size:11.5px; color:var(--sidebar-ink-dim);}
+
+  #main{padding:28px 34px 60px; max-width:1360px; width:100%; min-width:0;}
+  #topbar{display:flex; align-items:flex-start; justify-content:space-between; gap:20px; margin-bottom:24px; flex-wrap:wrap;}
+  #topbar h1{font-size:23px;}
+  #topbar .desc{color:var(--ink-soft); font-size:14px; margin-top:4px;}
+  .topbar-actions{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+
+  .kpi-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:22px;}
+  @media (max-width:980px){.kpi-grid{grid-template-columns:repeat(2,1fr);}}
+  @media (max-width:560px){.kpi-grid{grid-template-columns:1fr;}}
+  .kpi{padding:18px 18px 16px;}
+  .kpi .eyebrow{margin-bottom:10px;}
+  .kpi .value{font-size:25px; font-weight:700; letter-spacing:-.01em;}
+  .kpi .delta{font-size:12.5px; margin-top:8px; display:flex; align-items:center; gap:5px; font-weight:600;}
+
+  .panel-grid{display:grid; grid-template-columns:1.5fr 1fr; gap:16px; margin-bottom:20px; align-items:stretch;}
+  @media (max-width:980px){.panel-grid{grid-template-columns:1fr;}}
+  .panel{padding:20px 22px;}
+  .panel-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; gap:10px; flex-wrap:wrap;}
+  .panel-head h3{font-size:15.5px;}
+  .panel-head .sub{font-size:12.5px; color:var(--ink-faint);}
+
+  .table-card{padding:0; margin-bottom:20px;}
+  .table-card .panel-head{padding:18px 22px 0;}
+  .table-toolbar{display:flex; gap:10px; padding:14px 22px; flex-wrap:wrap; align-items:center; border-bottom:1px solid var(--border);}
+  .table-toolbar input[type=search], .table-toolbar input[type=date], .table-toolbar input[type=text]{
+    padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2);
+    font-size:13.5px; min-width:170px;
+  }
+  .table-toolbar select{padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); font-size:13.5px;}
+
+  .legend-row{display:flex; align-items:center; gap:16px; font-size:12.5px; color:var(--ink-soft); flex-wrap:wrap;}
+  .legend-item{display:flex; align-items:center; gap:6px;}
+  .legend-dot{width:9px;height:9px;border-radius:2px; flex-shrink:0;}
+
+  .op-row{display:flex; align-items:center; gap:10px;}
+  .op-badge{width:32px;height:32px;border-radius:8px;background:var(--brand-soft); color:var(--brand); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:12px; flex-shrink:0;}
+  .op-meta .name{font-weight:700; font-size:13.5px;}
+  .op-meta .email{font-size:11.5px; color:var(--ink-faint);}
+
+  .modal-backdrop{
+    position:fixed; inset:0; background:rgba(13,17,23,.55); display:none; align-items:center; justify-content:center;
+    z-index:50; padding:20px;
+  }
+  .modal-backdrop.active{display:flex;}
+  .modal{background:var(--surface); border-radius:14px; padding:26px; max-width:480px; width:100%; box-shadow:var(--shadow); max-height:88vh; overflow:auto;}
+  .modal h3{font-size:18px; margin-bottom:4px;}
+  .modal .sub{color:var(--ink-soft); font-size:13.5px; display:block; margin-bottom:18px;}
+  .modal form{display:flex; flex-direction:column; gap:14px;}
+  .modal-actions{display:flex; justify-content:flex-end; gap:10px; margin-top:6px;}
+  .credential-box{
+    background:var(--surface-2); border:1px dashed var(--border); border-radius:10px; padding:14px;
+    font-family:var(--font-mono); font-size:13px; display:flex; flex-direction:column; gap:6px;
+  }
+
+  .toast-wrap{position:fixed; bottom:22px; right:22px; z-index:60; display:flex; flex-direction:column; gap:8px;}
+  .toast{
+    background:var(--ink); color:var(--bg); padding:12px 16px; border-radius:9px; font-size:13.5px; font-weight:600;
+    box-shadow:var(--shadow); animation:toastin .18s ease;
+  }
+  @keyframes toastin{from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;}}
+
+  .empty{padding:40px 20px; text-align:center; color:var(--ink-faint); font-size:13.5px;}
+
+  .theme-toggle{
+    display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px;
+    border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--ink-soft);
+    cursor:pointer; flex-shrink:0; transition:transform .12s ease;
+  }
+  .theme-toggle:hover{transform:scale(1.06);}
+  #login-theme-toggle{position:absolute; top:20px; right:20px; z-index:2;}
+  #sidebar .theme-toggle{background:transparent; border-color:rgba(255,255,255,.14); color:var(--sidebar-ink);}
+
+  .main-fade{animation: fadeSlideIn .28s ease;}
+  @keyframes fadeSlideIn{from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;}}
+  .kpi, .panel{transition:transform .15s ease, box-shadow .15s ease;}
+  .kpi:hover, .panel:hover{transform:translateY(-2px); box-shadow:0 4px 16px -6px rgba(31,35,40,.2);}
+  .nav-item{transition:background .12s ease, color .12s ease;}
+  canvas{transition:opacity .4s ease;}
+
+  @media (max-width:760px){
+    #app.active{grid-template-columns:1fr;}
+    #sidebar{position:sticky; top:0; height:auto; flex-direction:row; align-items:center; padding:12px 14px; overflow-x:auto; z-index:5; gap:10px;}
+    #sidebar .brand-mark{margin-bottom:0;}
+    #nav-root{display:flex;}
+    .nav-group{display:flex; gap:4px; margin-bottom:0;}
+    .nav-label{display:none;}
+    .nav-item{white-space:nowrap;}
+    #sidebar-foot{margin-top:0; margin-left:auto; border-top:none; padding-top:0; display:flex; align-items:center; flex-shrink:0;}
+    .who{display:none;}
+    #main{padding:20px 16px 60px;}
+  }
+  @media (prefers-reduced-motion: reduce){ *{animation:none !important; transition:none !important;} }
+</style>
+
+<!-- ===================== LOGIN ===================== -->
+<div id="login-screen">
+  <button class="theme-toggle" id="login-theme-toggle" data-theme-toggle title="Toggle theme"></button>
+  <div id="login-brand">
+    <canvas id="gate-canvas"></canvas>
+    <div class="brand-mark"><span class="dot"></span> GoStatement</div>
+    <div class="brand-copy">
+      <h1>Clear settlements. Every time.</h1>
+      <p>Sign in to track daily sales, charges and net payouts — reconciled, itemized, and ready as a statement whenever you need one.</p>
+      <div class="brand-features">
+        <div class="feature"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>Real-time settlement tracking</div>
+        <div class="feature"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>Itemized deductions &amp; additions</div>
+        <div class="feature"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>One-click statement generation</div>
+      </div>
+    </div>
+    <div class="brand-foot">Secure access for authorized operators and terminal staff only.</div>
+  </div>
+  <div id="login-form-wrap">
+    <div id="login-form">
+      <h2>Sign in</h2>
+      <span class="sub">Enter your operator email/ID and password.</span>
+      <form id="loginForm" autocomplete="off">
+        <div id="login-error"></div>
+        <div class="field">
+          <label for="loginId">Email or operator ID</label>
+          <input id="loginId" type="text" placeholder="e.g. adamekspres@gmail.com" required>
+        </div>
+        <div class="field">
+          <label for="loginPw">Password</label>
+          <div class="pw-wrap">
+            <input id="loginPw" type="password" placeholder="Password" required>
+            <button type="button" class="pw-toggle" data-pw-toggle="loginPw" tabindex="-1"></button>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top:4px;">Sign in</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== APP ===================== -->
+<div id="app">
+  <aside id="sidebar">
+    <div class="brand-mark" style="justify-content:space-between;"><span style="display:flex; align-items:center; gap:10px;"><span class="dot"></span> GoStatement</span><button class="theme-toggle" title="Toggle theme"></button></div>
+    <div id="nav-root"></div>
+    <div id="sidebar-foot">
+      <div class="who">
+        <div class="avatar" id="who-avatar">–</div>
+        <div>
+          <div class="name" id="who-name">–</div>
+          <div class="role" id="who-role">–</div>
+        </div>
+      </div>
+      <div style="display:flex; gap:8px; padding:10px 2px 0;">
+        <button class="btn btn-ghost btn-sm" id="btn-change-pw" style="flex:1; color:var(--sidebar-ink); border:1px solid rgba(255,255,255,.14);">Password</button>
+        <button class="btn btn-ghost btn-sm" id="btn-logout" style="flex:1; color:var(--sidebar-ink); border:1px solid rgba(255,255,255,.14);">Sign out</button>
+      </div>
+    </div>
+  </aside>
+  <main id="main"></main>
+</div>
+
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal" id="modal-body"></div>
+</div>
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<script>
+const LEDGER = { KT: [], MS: [] };
+const EMAIL_MAP = { KT: {}, MS: {} };
+const TERMINALS = {
+  KT: { code:'KT', name:'Kuala Terengganu Bus Terminal', short:'KT Terminal', color:'var(--kt)' },
+  MS: { code:'MS', name:'Melaka Sentral', short:'Melaka Sentral', color:'var(--ms)' }
+};
+</script>
+<script>
+/* ============================================================
+   GoStatement — Bus Operator Settlement Portal
+   Client-side demo (localStorage). No backend: data lives in this
+   browser only. Seeded from real March-September 2026 settlement
+   exports for Kuala Terengganu Bus Terminal (KT) and Melaka
+   Sentral (MS). Admin can add/edit daily entries by hand or by
+   importing the terminal's own .xlsx settlement export directly
+   in the browser (no server, no external libraries), move an
+   entry through draft -> pre-finalized -> finalized, and every
+   operator can generate their own bank-style PDF statement.
+   ============================================================ */
+
+const STORAGE_KEY = 'gerbang_state_v4';
+const SESSION_KEY = 'gerbang_session_v4';
+const THEME_KEY = 'gerbang_theme';
+const REDUCE_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ---------------- utilities ---------------- */
+function fmtMoney(n){
+  n = Number(n) || 0;
+  const neg = n < -0.004;
+  const abs = Math.abs(n);
+  const s = abs.toLocaleString('en-MY', {minimumFractionDigits:2, maximumFractionDigits:2});
+  return (neg ? '−' : '') + 'RM ' + s;
+}
+function fmtAbs(n){ return fmtMoney(Math.abs(Number(n)||0)); }
+function fmtInt(n){ return Math.round(Number(n)||0).toLocaleString('en-MY'); }
+function fmtDate(iso){
+  const d = new Date(iso+'T00:00:00');
+  return d.toLocaleDateString('en-MY', {day:'2-digit', month:'short', year:'numeric'});
+}
+function fmtDateShort(iso){
+  const d = new Date(iso+'T00:00:00');
+  return d.toLocaleDateString('en-MY', {day:'2-digit', month:'short'});
+}
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function el(html){ const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; }
+function initials(str){
+  return str.replace(/[^A-Za-z0-9 ]/g,'').trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase() || '??';
+}
+async function sha256Hex(str){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+function djb2(str){
+  let h = 5381;
+  for(let i=0;i<str.length;i++){ h = ((h*33) ^ str.charCodeAt(i)) >>> 0; }
+  return h >>> 0;
+}
+function tempPasswordFor(terminal, company){
+  const h = djb2(terminal+'|'+company+'|salt-gerbang').toString(36).toUpperCase().padStart(6,'0').slice(0,6);
+  const stub = company.replace(/[^A-Za-z0-9]/g,'').slice(0,3).toUpperCase() || 'OPR';
+  return `${terminal}${stub}-${h}`;
+}
+function toast(msg){
+  const wrap = document.getElementById('toast-wrap');
+  const t = el(`<div class="toast">${esc(msg)}</div>`);
+  wrap.appendChild(t);
+  setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .25s'; setTimeout(()=>t.remove(), 260); }, 3200);
+}
+
+/* ============================================================
+   THEME (explicit light/dark/system toggle)
+   ============================================================ */
+function currentThemeMode(){ return localStorage.getItem(THEME_KEY) || 'system'; }
+function icon2(path){ return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`; }
+const THEME_ICONS = {
+  system: icon2('<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18Z" fill="currentColor" stroke="none"/>'),
+  light: icon2('<circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.4M12 19.1v2.4M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.9 19.1l1.7-1.7M17.4 6.6l1.7-1.7"/>'),
+  dark: icon2('<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z"/>'),
+};
+const EYE_ICON = icon2('<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/>');
+const EYE_OFF_ICON = icon2('<path d="M3 3l18 18"/><path d="M10.6 10.6a3 3 0 0 0 4.24 4.24"/><path d="M9.9 4.24A11 11 0 0 1 12 4c7 0 11 7 11 7a13.4 13.4 0 0 1-3.15 4.06M6.1 6.1A13.4 13.4 0 0 0 1 11s4 7 11 7c1.55 0 2.98-.32 4.24-.85"/>');
+function initPasswordToggle(id){
+  const btn = document.querySelector(`[data-pw-toggle="${id}"]`);
+  if(btn) btn.innerHTML = EYE_ICON;
+}
+document.addEventListener('click', (e)=>{
+  const btn = e.target.closest('[data-pw-toggle]');
+  if(!btn) return;
+  const input = document.getElementById(btn.getAttribute('data-pw-toggle'));
+  if(!input) return;
+  const showing = input.type === 'text';
+  input.type = showing ? 'password' : 'text';
+  btn.innerHTML = showing ? EYE_ICON : EYE_OFF_ICON;
+});
+function applyTheme(mode){
+  const root = document.documentElement;
+  if(mode==='light') root.setAttribute('data-theme','light');
+  else if(mode==='dark') root.setAttribute('data-theme','dark');
+  else root.removeAttribute('data-theme');
+  localStorage.setItem(THEME_KEY, mode);
+  document.querySelectorAll('.theme-toggle').forEach(btn=>{
+    btn.innerHTML = THEME_ICONS[mode];
+    btn.title = 'Theme: ' + mode[0].toUpperCase()+mode.slice(1) + ' (click to change)';
+  });
+}
+function cycleTheme(){
+  const order = ['system','light','dark'];
+  const next = order[(order.indexOf(currentThemeMode())+1) % order.length];
+  applyTheme(next);
+}
+
+/* ============================================================
+   ANIMATION HELPERS
+   ============================================================ */
+function fadeInMain(){
+  const main = document.getElementById('main');
+  if(REDUCE_MOTION) return;
+  main.classList.remove('main-fade');
+  void main.offsetWidth;
+  main.classList.add('main-fade');
+}
+function animateKpis(){
+  document.querySelectorAll('.kpi .value[data-target]').forEach(node=>{
+    const target = parseFloat(node.getAttribute('data-target'));
+    const kind = node.getAttribute('data-fmt') || 'money';
+    const fmt = kind === 'int' ? fmtInt : fmtMoney;
+    if(REDUCE_MOTION){ node.textContent = fmt(target); return; }
+    const start = performance.now();
+    const dur = 560;
+    function step(now){
+      const p = Math.min(1, (now-start)/dur);
+      const eased = 1 - Math.pow(1-p, 3);
+      node.textContent = fmt(target*eased);
+      if(p<1) requestAnimationFrame(step);
+      else node.textContent = fmt(target);
+    }
+    requestAnimationFrame(step);
+  });
+}
+
+/* ============================================================
+   DATA LAYER — base seed (LEDGER) merged with admin-entered
+   overrides (STATE.entries), so "update" and "add" both work.
+   ============================================================ */
+function entryKey(terminal, company, date){ return terminal+'|'+company+'|'+date; }
+
+function mergedRowsForTerminal(terminal){
+  const map = new Map();
+  for(const r of LEDGER[terminal]) map.set(r[0]+'|'+r[1], r.slice());
+  const prefix = terminal+'|';
+  for(const key in STATE.entries){
+    if(!key.startsWith(prefix)) continue;
+    const rest = key.slice(prefix.length);
+    const sep = rest.lastIndexOf('|');
+    const company = rest.slice(0, sep);
+    const date = rest.slice(sep+1);
+    const e = STATE.entries[key];
+    map.set(company+'|'+date, [company, date, e.sales, e.stdCharge, e.manualCharge, e.undersales, e.final, true]);
+  }
+  return Array.from(map.values());
+}
+function rowsForTerminal(terminal){ return mergedRowsForTerminal(terminal); }
+function rowsFor(terminal, company){
+  return mergedRowsForTerminal(terminal).filter(r => r[0] === company).sort((a,b)=> a[1] < b[1] ? -1 : 1);
+}
+function allDatesFor(terminal){
+  return Array.from(new Set(mergedRowsForTerminal(terminal).map(r=>r[1]))).sort();
+}
+function sumRows(rows){
+  return rows.reduce((acc,r)=>{
+    acc.sales += r[2]; acc.stdCharge += r[3]; acc.manualCharge += r[4]; acc.undersales += r[5]; acc.final += r[6];
+    return acc;
+  }, {sales:0, stdCharge:0, manualCharge:0, undersales:0, final:0});
+}
+function inRange(dateIso, from, to){ return dateIso >= from && dateIso <= to; }
+
+function operatorsFromLedgerSeed(){
+  const list = [];
+  for(const term of Object.keys(LEDGER)){
+    const seen = new Map();
+    for(const row of LEDGER[term]){
+      const company = row[0];
+      if(!seen.has(company)) seen.set(company, 0);
+      seen.set(company, seen.get(company) + row[6]);
+    }
+    const arr = Array.from(seen.entries()).sort((a,b)=>b[1]-a[1]);
+    for(const [company] of arr){
+      list.push({ id: term+'::'+company, terminal: term, company, email: (EMAIL_MAP[term]||{})[company] || null });
+    }
+  }
+  return list;
+}
+
+/* ---------------- entry status (draft -> pre-finalized -> finalized) ---------------- */
+const STATUS_LABEL = { draft:'Draft', prefinalized:'Pre-Finalized', finalized:'Finalized' };
+const STATUS_PILL = { draft:'pill-neutral', prefinalized:'pill-accent', finalized:'pill-good' };
+function getEntryStatus(terminal, company, date){
+  const e = STATE.entries[entryKey(terminal, company, date)];
+  if(!e) return 'finalized'; // untouched historical/seed data is treated as closed books
+  return e.status || 'draft';
+}
+function ensureEntryRecord(terminal, company, date){
+  const key = entryKey(terminal, company, date);
+  if(!STATE.entries[key]){
+    const row = rowsFor(terminal, company).find(r=>r[1]===date);
+    if(!row) return null;
+    STATE.entries[key] = { sales:row[2], stdCharge:row[3], manualCharge:row[4], undersales:row[5], final:row[6], status:'finalized' };
+  }
+  return STATE.entries[key];
+}
+function setEntryStatus(terminal, company, date, status){
+  const rec = ensureEntryRecord(terminal, company, date);
+  if(rec){ rec.status = status; persist(); }
+}
+
+/* ---------------- state ---------------- */
+let STATE = null;
+let IMPORT_PREVIEW = null; // transient, not persisted
+
+async function ensureSeed(){
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if(raw){
+    STATE = JSON.parse(raw);
+    if(!STATE.entries) STATE.entries = {};
+    if(!STATE.admins){
+      STATE.admins = STATE.admin ? [{ id: STATE.admin.id||'admin', name:'Administrator', email:null, passwordHash: STATE.admin.passwordHash, mustChange: !!STATE.admin.mustChange, active:true }] : [];
+      delete STATE.admin;
+      persist();
+    }
+    return;
+  }
+  const admins = [{ id:'admin', name:'Administrator', email:null, passwordHash: await sha256Hex('Admin@2026'), mustChange:false, active:true }];
+  const opDefs = operatorsFromLedgerSeed();
+  const operators = [];
+  for(const o of opDefs){
+    if(!o.email) continue;
+    const temp = tempPasswordFor(o.terminal, o.company);
+    operators.push({
+      id: o.id, terminal: o.terminal, company: o.company, email: o.email,
+      passwordHash: await sha256Hex(temp), tempPasswordPlain: temp,
+      mustChange: true, active: true
+    });
+  }
+  STATE = { admins, operators, entries: {} };
+  persist();
+}
+function persist(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE)); }
+function findOperatorByEmail(email){
+  const e = email.trim().toLowerCase();
+  return STATE.operators.find(o => o.email && o.email.trim().toLowerCase() === e);
+}
+function findOperatorById(id){ return STATE.operators.find(o=>o.id===id); }
+function findAdminByLoginId(idVal){
+  const v = idVal.trim().toLowerCase();
+  return STATE.admins.find(a => a.id.toLowerCase()===v || (a.email && a.email.toLowerCase()===v));
+}
+function findAdminById(id){ return STATE.admins.find(a=>a.id===id); }
+
+function getSession(){ try{ return JSON.parse(sessionStorage.getItem(SESSION_KEY)); }catch(e){ return null; } }
+function setSession(s){ sessionStorage.setItem(SESSION_KEY, JSON.stringify(s)); }
+function clearSession(){ sessionStorage.removeItem(SESSION_KEY); }
+
+/* ---------------- view state (in-memory, per tab) ---------------- */
+const VIEW = {
+  route: 'dashboard',
+  adminTerminal: 'ALL',
+  rangeMode: 'last30',
+  customFrom: null,
+  customTo: null,
+  viewingAsOperatorId: null,
+  dirSearch: '',
+  dirTerminal: 'ALL',
+  ledgerSearch: '',
+  reconcileSearch: '',
+  sortDir: 'desc',
+  entryForm: { terminal:'KT', operatorId:null, date:null },
+};
+
+/* ============================================================
+   XLSX IMPORT — hand-rolled ZIP + XML reader (no dependencies).
+   ============================================================ */
+async function unzip(arrayBuffer){
+  const buf = new Uint8Array(arrayBuffer);
+  const dv = new DataView(arrayBuffer);
+  let eocd = -1;
+  for(let i = buf.length-22; i>=0; i--){
+    if(dv.getUint32(i, true) === 0x06054b50){ eocd = i; break; }
+  }
+  if(eocd < 0) throw new Error('This does not look like a valid .xlsx file.');
+  const cdCount = dv.getUint16(eocd+10, true);
+  const cdOffset = dv.getUint32(eocd+16, true);
+  const files = {};
+  let ptr = cdOffset;
+  for(let i=0;i<cdCount;i++){
+    const sig = dv.getUint32(ptr, true);
+    if(sig !== 0x02014b50) break;
+    const method = dv.getUint16(ptr+10, true);
+    const compSize = dv.getUint32(ptr+20, true);
+    const nameLen = dv.getUint16(ptr+28, true);
+    const extraLen = dv.getUint16(ptr+30, true);
+    const commentLen = dv.getUint16(ptr+32, true);
+    const localOffset = dv.getUint32(ptr+42, true);
+    const nameBytes = buf.slice(ptr+46, ptr+46+nameLen);
+    const name = new TextDecoder().decode(nameBytes);
+    files[name] = { method, compSize, localOffset };
+    ptr += 46 + nameLen + extraLen + commentLen;
+  }
+  async function readFile(name){
+    const f = files[name];
+    if(!f) return null;
+    const lh = f.localOffset;
+    const lNameLen = dv.getUint16(lh+26, true);
+    const lExtraLen = dv.getUint16(lh+28, true);
+    const dataStart = lh + 30 + lNameLen + lExtraLen;
+    const compData = buf.slice(dataStart, dataStart+f.compSize);
+    if(f.method === 0) return compData;
+    if(f.method === 8){
+      if(typeof DecompressionStream === 'undefined') throw new Error('This browser cannot decompress .xlsx files in-page. Please use a Chromium-based browser (Chrome/Edge).');
+      const ds = new DecompressionStream('deflate-raw');
+      const stream = new Blob([compData]).stream().pipeThrough(ds);
+      const ab = await new Response(stream).arrayBuffer();
+      return new Uint8Array(ab);
+    }
+    throw new Error('Unsupported compression in this .xlsx file.');
+  }
+  return { files, readFile };
+}
+function colLetterToIndex(letters){
+  let n = 0;
+  for(const ch of letters) n = n*26 + (ch.charCodeAt(0)-64);
+  return n;
+}
+function excelSerialToIso(serial){
+  const ms = Math.round((serial - 25569) * 86400 * 1000);
+  return new Date(ms).toISOString().slice(0,10);
+}
+function parseSharedStringsXml(xmlText){
+  if(!xmlText) return [];
+  const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+  return Array.from(doc.getElementsByTagName('si')).map(si =>
+    Array.from(si.getElementsByTagName('t')).map(t=>t.textContent).join('')
+  );
+}
+function parseSheetXml(xmlText, sharedStrings){
+  const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+  const rows = {};
+  const rowEls = doc.getElementsByTagName('row');
+  for(let i=0;i<rowEls.length;i++){
+    const rowEl = rowEls[i];
+    const rIdx = parseInt(rowEl.getAttribute('r'), 10);
+    const cells = {};
+    const cEls = rowEl.getElementsByTagName('c');
+    for(let j=0;j<cEls.length;j++){
+      const c = cEls[j];
+      const ref = c.getAttribute('r');
+      if(!ref) continue;
+      const m = ref.match(/^([A-Z]+)(\d+)$/);
+      if(!m) continue;
+      const colIdx = colLetterToIndex(m[1]);
+      const type = c.getAttribute('t');
+      let val = null;
+      if(type === 'inlineStr'){
+        const isEl = c.getElementsByTagName('is')[0];
+        val = isEl ? Array.from(isEl.getElementsByTagName('t')).map(t=>t.textContent).join('') : '';
+      } else {
+        const vEl = c.getElementsByTagName('v')[0];
+        const raw = vEl ? vEl.textContent : null;
+        if(raw === null){ val = null; }
+        else if(type === 's'){ val = sharedStrings[parseInt(raw,10)]; }
+        else if(type === 'str'){ val = raw; }
+        else if(type === 'b'){ val = raw === '1'; }
+        else { val = parseFloat(raw); }
+      }
+      cells[colIdx] = val;
+    }
+    if(Object.keys(cells).length) rows[rIdx] = cells;
+  }
+  return rows;
+}
+function extractRecordsFromSheetRows(rowsMap){
+  const records = [];
+  const rowIndices = Object.keys(rowsMap).map(Number).sort((a,b)=>a-b);
+  let headerRowIdx = null, headerCells = null;
+  for(const ri of rowIndices.slice(0, 15)){
+    const cells = rowsMap[ri];
+    const vals = Object.values(cells);
+    if(vals.includes('Company') && vals.some(v=>v==='Sales Report')){ headerRowIdx = ri; headerCells = cells; break; }
+  }
+  if(headerRowIdx === null) return records;
+  const companyCols = Object.keys(headerCells).map(Number).filter(c=>headerCells[c]==='Company').sort((a,b)=>a-b);
+  for(const companyCol of companyCols){
+    const dateCol = companyCol-1;
+    const emailHeader = headerCells[companyCol-3];
+    const emailCol = (typeof emailHeader === 'string' && emailHeader.trim().toLowerCase()==='email') ? companyCol-3 : null;
+    const salesCol = companyCol+1;
+    const nextBlockStart = companyCols.find(c=>c>companyCol) || Infinity;
+    const adjCols = [];
+    let finalCol = null;
+    for(let c = companyCol+2; c < nextBlockStart; c++){
+      const label = headerCells[c];
+      if(label===undefined || label===null || label==='') continue;
+      if(String(label).trim().toLowerCase()==='final'){ finalCol = c; break; }
+      adjCols.push({ col:c, label:String(label).trim() });
+    }
+    for(const ri of rowIndices){
+      if(ri <= headerRowIdx) continue;
+      const cells = rowsMap[ri];
+      const company = cells[companyCol];
+      if(typeof company !== 'string') continue;
+      const cu = company.trim().toUpperCase();
+      if(!cu || ['TOTAL','COMPANY','FINAL'].includes(cu)) continue;
+      const dateRaw = cells[dateCol];
+      if(typeof dateRaw !== 'number') continue;
+      const date = excelSerialToIso(dateRaw);
+      const sales = Number(cells[salesCol]) || 0;
+      const items = {};
+      let manualCharge = 0, stdCharge = 0, undersales = 0;
+      for(const {col,label} of adjCols){
+        const v = Number(cells[col]) || 0;
+        items[label] = v;
+        const ll = label.toLowerCase();
+        if(ll.includes('undersale')) undersales += v;
+        else if(ll.includes('manual')) manualCharge += v;
+        else stdCharge += v;
+      }
+      const final = finalCol != null ? (Number(cells[finalCol]) || 0) : (sales+stdCharge+manualCharge+undersales);
+      const email = emailCol != null ? cells[emailCol] : null;
+      records.push({
+        company: company.trim(), date, sales, stdCharge, manualCharge, undersales, final, items,
+        email: (typeof email === 'string' ? email.trim() : null)
+      });
+    }
+  }
+  return records;
+}
+async function parseSettlementWorkbook(arrayBuffer){
+  const zip = await unzip(arrayBuffer);
+  const sharedStringsXml = zip.files['xl/sharedStrings.xml'] ? new TextDecoder().decode(await zip.readFile('xl/sharedStrings.xml')) : null;
+  const sharedStrings = sharedStringsXml ? parseSharedStringsXml(sharedStringsXml) : [];
+  const sheetNames = Object.keys(zip.files).filter(n => /^xl\/worksheets\/sheet\d+\.xml$/.test(n));
+  if(!sheetNames.length) throw new Error('No worksheet data found in this file.');
+  let terminalGuess = null;
+  let allRecords = [];
+  for(const sn of sheetNames){
+    const xml = new TextDecoder().decode(await zip.readFile(sn));
+    const rowsMap = parseSheetXml(xml, sharedStrings);
+    for(const ri of [1,2,3]){
+      const row = rowsMap[ri];
+      if(!row) continue;
+      for(const v of Object.values(row)){
+        if(typeof v === 'string'){
+          if(v.includes('Kuala Terengganu')) terminalGuess = 'KT';
+          if(v.includes('Melaka Sentral')) terminalGuess = 'MS';
+        }
+      }
+    }
+    allRecords = allRecords.concat(extractRecordsFromSheetRows(rowsMap));
+  }
+  const map = new Map();
+  for(const r of allRecords) map.set(r.company+'|'+r.date, r);
+  const records = Array.from(map.values()).sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1: a.company.localeCompare(b.company)));
+  if(!records.length) throw new Error('No settlement rows were recognized in this file. Expected columns like "Company", "Sales Report" and "Final".');
+  return { terminal: terminalGuess, records };
+}
+
+/* ============================================================
+   LOGIN
+   ============================================================ */
+function initLoginStats(){ /* intentionally not shown pre-login */ }
+async function handleLogin(e){
+  e.preventDefault();
+  const idVal = document.getElementById('loginId').value.trim();
+  const pw = document.getElementById('loginPw').value;
+  const errBox = document.getElementById('login-error');
+  errBox.style.display = 'none';
+  const hash = await sha256Hex(pw);
+
+  const admin = findAdminByLoginId(idVal);
+  if(admin && admin.active !== false){
+    if(hash === admin.passwordHash){ setSession({ type:'admin', adminId: admin.id }); enterApp(); return; }
+  } else {
+    const op = findOperatorByEmail(idVal);
+    if(op && op.active && hash === op.passwordHash){ setSession({ type:'operator', id: op.id }); enterApp(); return; }
+  }
+  errBox.textContent = 'Invalid ID or password. Please check and try again.';
+  errBox.style.display = 'block';
+}
+
+function drawGateCanvas(){
+  const canvas = document.getElementById('gate-canvas');
+  const dpr = Math.min(window.devicePixelRatio||1, 2);
+  function size(){ const r = canvas.getBoundingClientRect(); canvas.width = r.width*dpr; canvas.height = r.height*dpr; }
+  size();
+  const ctx = canvas.getContext('2d');
+  let t = 0;
+  function frame(){
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0,0,w,h);
+    const lanes = 5;
+    for(let i=0;i<lanes;i++){
+      const y = h*0.18 + (h*0.66)*(i/(lanes-1));
+      const useKt = i%2===0;
+      ctx.beginPath();
+      ctx.strokeStyle = useKt ? `rgba(68,147,248,${0.06 + i*0.015})` : `rgba(163,113,247,${0.06 + i*0.015})`;
+      ctx.lineWidth = 1.4*dpr;
+      ctx.setLineDash([10*dpr, 14*dpr]);
+      ctx.lineDashOffset = REDUCE_MOTION ? 0 : -t*(0.4+i*0.12);
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y + Math.sin(i*1.3)*18*dpr);
+      ctx.stroke();
+    }
+    for(let gx=0.12; gx<1; gx+=0.22){
+      ctx.fillStyle = 'rgba(255,255,255,.05)';
+      ctx.fillRect(gx*w, h*0.1, 3*dpr, h*0.8);
+    }
+    t += 1;
+    if(!REDUCE_MOTION) requestAnimationFrame(frame);
+  }
+  frame();
+  window.addEventListener('resize', size);
+}
+
+function showLogin(){
+  document.getElementById('login-screen').style.display = 'grid';
+  document.getElementById('app').classList.remove('active');
+  document.getElementById('loginId').value = '';
+  document.getElementById('loginPw').value = '';
+}
+
+/* ============================================================
+   APP SHELL
+   ============================================================ */
+function currentActor(){
+  const s = getSession();
+  if(!s) return null;
+  if(s.type === 'admin'){ const admin = findAdminById(s.adminId); return admin ? { type:'admin', admin } : null; }
+  const op = findOperatorById(s.id);
+  return op ? { type:'operator', op } : null;
+}
+function icon(path){ return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`; }
+const ICONS = {
+  dashboard: icon('<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'),
+  ledger: icon('<path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z"/><path d="M14 3v5h5"/><path d="M8 13h8M8 17h5"/>'),
+  directory: icon('<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 8.2a3 3 0 1 1 3.6 3.9"/><path d="M20.5 20c-.2-2.2-1.4-4-3.2-5"/>'),
+  overview: icon('<path d="M4 19h16"/><path d="M7 19V9M12 19V5M17 19v-7"/>'),
+  entry: icon('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>'),
+  admins: icon('<path d="M12 2 4 5v6c0 5 3.4 8.7 8 11 4.6-2.3 8-6 8-11V5Z"/><path d="m9 12 2 2 4-4"/>'),
+  reconcile: icon('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>'),
+};
+
+function navItemsFor(actor){
+  if(actor.type === 'admin' && !VIEW.viewingAsOperatorId){
+    return [
+      {route:'overview', label:'Overview', icon:ICONS.overview},
+      {route:'directory', label:'Operator Directory', icon:ICONS.directory},
+      {route:'ledger', label:'Settlement Ledger', icon:ICONS.ledger},
+      {route:'entry', label:'Daily Entry', icon:ICONS.entry},
+      {route:'reconcile', label:'Reconciliation', icon:ICONS.reconcile},
+      {route:'admins', label:'Admins', icon:ICONS.admins},
+    ];
+  }
+  return [
+    {route:'dashboard', label:'Dashboard', icon:ICONS.dashboard},
+    {route:'ledger', label:'Settlement Ledger', icon:ICONS.ledger},
+  ];
+}
+
+function renderShell(){
+  const actor = currentActor();
+  if(!actor){ logout(); return; }
+
+  const nav = document.getElementById('nav-root');
+  nav.innerHTML = '';
+  const group = el('<div class="nav-group"></div>');
+  for(const item of navItemsFor(actor)){
+    const btn = el(`<button class="nav-item ${VIEW.route===item.route?'active':''}">${item.icon}<span>${item.label}</span></button>`);
+    btn.addEventListener('click', ()=>{ IMPORT_PREVIEW = null; VIEW.route = item.route; renderShell(); });
+    group.appendChild(btn);
+  }
+  nav.appendChild(group);
+
+  if(actor.type === 'admin' && VIEW.viewingAsOperatorId){
+    const back = el(`<button class="nav-item" style="background:var(--accent-soft); color:var(--accent); margin-top:4px;">${icon('<path d="M15 18l-6-6 6-6"/>')}<span>Back to Admin</span></button>`);
+    back.addEventListener('click', ()=>{ VIEW.viewingAsOperatorId = null; VIEW.route='directory'; renderShell(); });
+    nav.appendChild(back);
+  }
+
+  if(actor.type === 'admin' && !VIEW.viewingAsOperatorId){
+    document.getElementById('who-avatar').textContent = initials(actor.admin.name || actor.admin.id);
+    document.getElementById('who-name').textContent = actor.admin.name || 'Administrator';
+    document.getElementById('who-role').textContent = 'Admin · Both terminals';
+  } else {
+    const op = actor.type === 'admin' ? findOperatorById(VIEW.viewingAsOperatorId) : actor.op;
+    document.getElementById('who-avatar').textContent = initials(op.company);
+    document.getElementById('who-name').textContent = op.company;
+    document.getElementById('who-role').textContent = (actor.type==='admin' ? 'Viewed by Admin · ' : 'Operator · ') + TERMINALS[op.terminal].short;
+  }
+
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').classList.add('active');
+
+  renderMain();
+}
+
+function enterApp(){ renderShell(); }
+function logout(){ clearSession(); VIEW.route='dashboard'; VIEW.viewingAsOperatorId=null; IMPORT_PREVIEW=null; showLogin(); }
+
+/* ============================================================
+   RANGE + SEARCH HELPERS
+   ============================================================ */
+function rangeForTerminal(terminal){
+  const dates = allDatesFor(terminal);
+  const todayIso = new Date().toISOString().slice(0,10);
+  const maxD = dates.length ? dates[dates.length-1] : todayIso;
+  const minD = dates.length ? dates[0] : todayIso;
+  if(VIEW.rangeMode === 'custom' && VIEW.customFrom && VIEW.customTo){ return { from: VIEW.customFrom, to: VIEW.customTo, minD, maxD }; }
+  if(VIEW.rangeMode === 'last7'){ const idx = Math.max(0, dates.length-7); return { from: dates[idx], to: maxD, minD, maxD }; }
+  if(VIEW.rangeMode === 'last30'){ const idx = Math.max(0, dates.length-30); return { from: dates[idx], to: maxD, minD, maxD }; }
+  return { from: minD, to: maxD, minD, maxD };
+}
+function rangeControlHtml(terminal){
+  const r = rangeForTerminal(terminal);
+  return `
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <select id="rangeMode" class="btn btn-sm" style="font-weight:600;">
+        <option value="last7" ${VIEW.rangeMode==='last7'?'selected':''}>Last 7 days</option>
+        <option value="last30" ${VIEW.rangeMode==='last30'?'selected':''}>Last 30 days</option>
+        <option value="all" ${VIEW.rangeMode==='all'?'selected':''}>All data</option>
+        <option value="custom" ${VIEW.rangeMode==='custom'?'selected':''}>Custom range / search a date</option>
+      </select>
+      ${VIEW.rangeMode==='custom' ? `
+        <input type="date" id="rangeFrom" value="${VIEW.customFrom||r.minD}" min="${r.minD}" max="${r.maxD}" class="date-input">
+        <span style="color:var(--ink-faint); font-size:13px;">to</span>
+        <input type="date" id="rangeTo" value="${VIEW.customTo||r.maxD}" min="${r.minD}" max="${r.maxD}" class="date-input">
+      ` : ''}
+    </div>`;
+}
+function wireRangeControls(onChange){
+  const mode = document.getElementById('rangeMode');
+  if(mode) mode.addEventListener('change', ()=>{ VIEW.rangeMode = mode.value; onChange(); });
+  const from = document.getElementById('rangeFrom');
+  const to = document.getElementById('rangeTo');
+  if(from) from.addEventListener('change', ()=>{ VIEW.customFrom = from.value; onChange(); });
+  if(to) to.addEventListener('change', ()=>{ VIEW.customTo = to.value; onChange(); });
+}
+
+/* ============================================================
+   CHARTS (canvas, hand-drawn)
+   ============================================================ */
+function drawAreaChart(canvas, series, opts){
+  // Deferred one frame: right after an innerHTML swap the canvas's box may not
+  // have its final width yet (grid/flex reflow still pending), which would size
+  // the backing buffer off a stale rect and stretch/blur everything drawn on it.
+  requestAnimationFrame(()=> drawAreaChartNow(canvas, series, opts));
+}
+function drawAreaChartNow(canvas, series, opts){
+  opts = opts || {};
+  const dpr = Math.min(window.devicePixelRatio||1, 2);
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width*dpr; canvas.height = rect.height*dpr;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const pad = {l:8*dpr, r:8*dpr, t:14*dpr, b:22*dpr};
+  ctx.clearRect(0,0,W,H);
+  const allPoints = series.flatMap(s=>s.points);
+  if(!allPoints.length) return;
+  const vals = allPoints.map(p=>p.v);
+  const max = Math.max(...vals, 1);
+  const min = Math.min(...vals, 0);
+  const spanV = (max-min) || 1;
+  const refLen = Math.max(...series.map(s=>s.points.length));
+  const innerW = W-pad.l-pad.r, innerH = H-pad.t-pad.b;
+  const x = i => pad.l + innerW * (refLen<=1 ? 0 : i/(refLen-1));
+  const y = v => pad.t + innerH * (1 - (v-min)/spanV);
+
+  ctx.strokeStyle = getCss('--border');
+  ctx.lineWidth = 1*dpr;
+  for(let g=0; g<=3; g++){
+    const gy = pad.t + innerH*g/3;
+    ctx.beginPath(); ctx.moveTo(pad.l, gy); ctx.lineTo(W-pad.r, gy); ctx.globalAlpha=.5; ctx.stroke(); ctx.globalAlpha=1;
+  }
+
+  for(const s of series){
+    const pts = s.points;
+    if(!pts.length) continue;
+    const grad = ctx.createLinearGradient(0,pad.t,0,H-pad.b);
+    grad.addColorStop(0, hexToRgba(s.color, .26));
+    grad.addColorStop(1, hexToRgba(s.color, 0));
+    ctx.beginPath();
+    ctx.moveTo(x(0), y(pts[0].v));
+    pts.forEach((p,i)=> ctx.lineTo(x(i), y(p.v)));
+    ctx.lineTo(x(pts.length-1), H-pad.b);
+    ctx.lineTo(x(0), H-pad.b);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.beginPath();
+    pts.forEach((p,i)=> i===0 ? ctx.moveTo(x(i), y(p.v)) : ctx.lineTo(x(i), y(p.v)));
+    ctx.strokeStyle = s.color; ctx.lineWidth = 2*dpr; ctx.lineJoin='round'; ctx.stroke();
+    const lastI = pts.length-1;
+    ctx.beginPath(); ctx.arc(x(lastI), y(pts[lastI].v), 3.4*dpr, 0, Math.PI*2);
+    ctx.fillStyle = s.color; ctx.fill();
+    ctx.lineWidth = 2*dpr; ctx.strokeStyle = getCss('--surface'); ctx.stroke();
+  }
+
+  const refPts = series.find(s=>s.points.length===refLen).points;
+  ctx.fillStyle = getCss('--ink-faint');
+  ctx.font = `${11*dpr}px 'IBM Plex Mono', monospace`;
+  ctx.textBaseline = 'top';
+  ctx.textAlign = 'left';
+  ctx.fillText(fmtDateShort(refPts[0].d), pad.l, H-pad.b+6*dpr);
+  ctx.textAlign = 'right';
+  ctx.fillText(fmtDateShort(refPts[refPts.length-1].d), W-pad.r, H-pad.b+6*dpr);
+
+  canvas.onmousemove = (e)=>{
+    const r2 = canvas.getBoundingClientRect();
+    const mx = (e.clientX-r2.left)*dpr;
+    let idx = 0, best = Infinity;
+    refPts.forEach((p,i)=>{ const d = Math.abs(x(i)-mx); if(d<best){best=d; idx=i;} });
+    const tip = opts.tipEl;
+    if(tip){
+      tip.style.display='block';
+      tip.textContent = series.map(s=> s.points[idx] ? `${s.label}: ${fmtMoney(s.points[idx].v)}` : '').filter(Boolean).join('  ·  ') + `  ·  ${fmtDate(refPts[idx].d)}`;
+    }
+  };
+  canvas.onmouseleave = ()=>{ if(opts.tipEl) opts.tipEl.style.display='none'; };
+  if(!REDUCE_MOTION){ canvas.style.opacity='0'; requestAnimationFrame(()=>{ canvas.style.transition='opacity .4s ease'; canvas.style.opacity='1'; }); }
+}
+function drawBarChart(canvas, bars, opts){
+  requestAnimationFrame(()=> drawBarChartNow(canvas, bars, opts));
+}
+function drawBarChartNow(canvas, bars, opts){
+  opts = opts || {};
+  const dpr = Math.min(window.devicePixelRatio||1, 2);
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width*dpr; canvas.height = rect.height*dpr;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0,0,W,H);
+  if(!bars.length) return;
+  const max = Math.max(...bars.map(b=>b.v), 1);
+  const topPad = 16*dpr;
+  const rowH = (H-topPad)/bars.length;
+  const barH = Math.min(20*dpr, rowH*0.5);
+  ctx.font = `${11.5*dpr}px 'Source Sans 3', sans-serif`;
+  bars.forEach((b,i)=>{
+    const cy = topPad + rowH*i + rowH/2;
+    ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.fillStyle = getCss('--ink-soft');
+    let label = b.label.length>14 ? b.label.slice(0,13)+'…' : b.label;
+    ctx.fillText(label, 0, cy - barH/2 - 8*dpr);
+    const maxBarW = W - 4*dpr;
+    const w = Math.max(3*dpr, (b.v/max) * maxBarW);
+    ctx.fillStyle = getCss('--surface-2');
+    roundRect(ctx, 0, cy-barH/2, maxBarW, barH, 4*dpr); ctx.fill();
+    ctx.fillStyle = b.color || getCss('--accent');
+    roundRect(ctx, 0, cy-barH/2, w, barH, 4*dpr); ctx.fill();
+    ctx.fillStyle = getCss('--ink');
+    ctx.font = `600 ${11.5*dpr}px 'IBM Plex Mono', monospace`;
+    ctx.textAlign='left';
+    ctx.fillText(fmtMoney(b.v), Math.min(w+8*dpr, maxBarW-90*dpr), cy);
+    ctx.font = `${11.5*dpr}px 'Source Sans 3', sans-serif`;
+  });
+  if(!REDUCE_MOTION){ canvas.style.opacity='0'; requestAnimationFrame(()=>{ canvas.style.transition='opacity .4s ease'; canvas.style.opacity='1'; }); }
+}
+function roundRect(ctx,x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+}
+function getCss(varName){
+  const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+  if(v && v.startsWith('var(')){ return getCss(v.slice(4,-1).trim()); }
+  return v || '#888';
+}
+function hexToRgba(hex, a){
+  hex = hex.trim();
+  if(hex[0] !== '#') return hex;
+  const n = hex.length===4
+    ? hex.slice(1).split('').map(c=>parseInt(c+c,16))
+    : [1,3,5].map(i=>parseInt(hex.slice(i,i+2),16));
+  return `rgba(${n[0]},${n[1]},${n[2]},${a})`;
+}
+
+/* ============================================================
+   ROW DETAIL — clear Deductions / Additions breakdown
+   ============================================================ */
+function rowDeductionsAdditions(terminal, company, date, row){
+  const entry = STATE.entries[entryKey(terminal, company, date)];
+  const items = entry && entry.items;
+  const adjustments = (entry && entry.adjustments) || [];
+  const deductions = [], additions = [];
+  additions.push({ label:'Ticket sales', amount: row[2] });
+  if(items && Object.keys(items).length){
+    for(const [label,v] of Object.entries(items)){
+      if(!v) continue;
+      (v < 0 ? deductions : additions).push({ label, amount: v });
+    }
+  } else {
+    if(row[3]) deductions.push({ label:'Terminal / pickup charges', amount: row[3] });
+    if(row[4]) deductions.push({ label:'Manual charges', amount: row[4] });
+    if(row[5]) (row[5] < 0 ? deductions : additions).push({ label:'Undersales adjustment', amount: row[5] });
+  }
+  for(const adj of adjustments){
+    if(!adj.amount) continue;
+    (adj.amount < 0 ? deductions : additions).push({ label: adj.label || 'Adjustment', amount: adj.amount });
+  }
+  return { deductions, additions, hasItems: !!(items && Object.keys(items).length), note: entry && entry.note };
+}
+
+/* ---------------- reconciliation ---------------- */
+function computeExpectedFinal(terminal, company, date, row){
+  const entry = STATE.entries[entryKey(terminal, company, date)];
+  const adjSum = (entry && entry.adjustments) ? entry.adjustments.reduce((s,a)=>s+(Number(a.amount)||0),0) : 0;
+  return row[2] + row[3] + row[4] + row[5] + adjSum;
+}
+function reconcileRow(terminal, company, date, row){
+  const expected = computeExpectedFinal(terminal, company, date, row);
+  const diff = row[6] - expected;
+  // A recorded net payout of exactly 0 typically means "not yet settled" in the
+  // source data rather than a clerical error — treat it as pending, not a mismatch,
+  // so the reconciliation view stays focused on genuine discrepancies.
+  const pending = row[6] === 0 && Math.abs(expected) > 0.01;
+  const mismatch = !pending && Math.abs(diff) > 0.01;
+  return { expected, diff, mismatch, pending };
+}
+
+function openRowDetailModal(terminal, company, date){
+  const row = rowsFor(terminal, company).find(r=>r[1]===date);
+  if(!row) return;
+  const { deductions, additions, hasItems, note } = rowDeductionsAdditions(terminal, company, date, row);
+  const status = getEntryStatus(terminal, company, date);
+  const recon = reconcileRow(terminal, company, date, row);
+  const line = (it, color) => `
+    <div style="display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px solid var(--border); font-size:13px;">
+      <span style="color:var(--ink-soft);">${esc(it.label)}</span><span class="num" style="color:${color};">${it.amount<0?'−':'+'}${fmtAbs(it.amount)}</span>
+    </div>`;
+  openModal(`
+    <h3>${esc(company)} — ${fmtDate(date)}</h3>
+    <div style="display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap;">
+      <span class="pill pill-${terminal.toLowerCase()}">${TERMINALS[terminal].name}</span>
+      <span class="pill ${STATUS_PILL[status]}">${STATUS_LABEL[status]}</span>
+      ${recon.mismatch ? `<span class="pill pill-bad">⚠ Mismatch</span>` : `<span class="pill pill-good">✓ Reconciled</span>`}
+    </div>
+    <div style="margin-bottom:14px;">
+      <div class="eyebrow" style="color:var(--good); margin-bottom:4px;">Additions</div>
+      ${additions.length ? additions.map(a=>line(a,'var(--good)')).join('') : '<div style="font-size:12.5px; color:var(--ink-faint); padding:4px 0;">None</div>'}
+    </div>
+    <div style="margin-bottom:14px;">
+      <div class="eyebrow" style="color:var(--bad); margin-bottom:4px;">Deductions</div>
+      ${deductions.length ? deductions.map(d=>line(d,'var(--bad)')).join('') : '<div style="font-size:12.5px; color:var(--ink-faint); padding:4px 0;">None</div>'}
+    </div>
+    <div style="display:flex; justify-content:space-between; padding:10px 0 0; font-weight:700;"><span>Net payout (recorded)</span><span class="num">${fmtMoney(row[6])}</span></div>
+    ${recon.mismatch ? `<div style="display:flex; justify-content:space-between; padding:4px 0; font-weight:700; color:var(--bad);"><span>Expected from additions/deductions</span><span class="num">${fmtMoney(recon.expected)} (diff ${fmtMoney(recon.diff)})</span></div>` : ''}
+    ${!hasItems ? `<div style="color:var(--ink-faint); font-size:11.5px; margin-top:10px;">Full line-by-line itemization is shown for entries imported from an Excel file.</div>` : ''}
+    ${note ? `<div style="margin-top:14px; padding-top:10px; border-top:1px solid var(--border);"><div class="eyebrow" style="margin-bottom:4px;">Remarks</div><div style="font-size:13px; color:var(--ink-soft);">${esc(note)}</div></div>` : ''}
+    <div class="modal-actions"><button class="btn btn-primary" id="rowDetailOk">Close</button></div>
+  `);
+  document.getElementById('rowDetailOk').addEventListener('click', closeModal);
+}
+
+/* ============================================================
+   STATEMENT PDF — a genuine .pdf file built byte-by-byte, with no
+   external library and no print-dialog step. This produces a real,
+   downloadable PDF directly via the same downloads mechanism used
+   for CSV/Excel, so it opens and prints identically in every
+   browser (Chrome, Edge, etc.) rather than depending on an HTML
+   preview + "Print to PDF" step.
+   ============================================================ */
+const HELV_WIDTHS = { ' ':278,'!':278,'"':355,'#':556,'$':556,'%':889,'&':667,"'":191,'(':333,')':333,'*':389,'+':584,',':278,'-':333,'.':278,'/':278,'0':556,'1':556,'2':556,'3':556,'4':556,'5':556,'6':556,'7':556,'8':556,'9':556,':':278,';':278,'<':584,'=':584,'>':584,'?':556,'@':1015,'A':667,'B':667,'C':722,'D':722,'E':667,'F':611,'G':778,'H':722,'I':278,'J':500,'K':667,'L':556,'M':833,'N':722,'O':778,'P':667,'Q':778,'R':722,'S':667,'T':611,'U':722,'V':667,'W':944,'X':667,'Y':667,'Z':611,'[':278,'\\':278,']':278,'^':469,'_':556,'`':333,'a':556,'b':556,'c':500,'d':556,'e':556,'f':278,'g':556,'h':556,'i':222,'j':222,'k':500,'l':222,'m':833,'n':556,'o':556,'p':556,'q':556,'r':333,'s':500,'t':278,'u':556,'v':500,'w':722,'x':500,'y':500,'z':500,'{':334,'|':260,'}':334,'~':584 };
+const PDF_UNICODE_MAP = { '−':'-','–':'-','—':'-','‘':"'",'’':"'",'“':'"','”':'"','…':'...','→':'->','⚠':'!','✓':'v','⏳':'*','×':'x','·':'-',' ':' ' };
+function pdfSanitize(s){
+  let out = '';
+  for(const ch of String(s)){
+    const code = ch.codePointAt(0);
+    if(code >= 32 && code <= 126){ out += ch; continue; }
+    if(PDF_UNICODE_MAP[ch] !== undefined){ out += PDF_UNICODE_MAP[ch]; continue; }
+    // drop anything else we can't safely represent in a non-embedded-font PDF
+  }
+  return out;
+}
+function pdfEscape(s){ return pdfSanitize(s).replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)'); }
+function textWidth(text, size, bold){
+  let w = 0;
+  for(const ch of pdfSanitize(text)) w += (HELV_WIDTHS[ch]||556);
+  return w/1000*size*(bold?1.06:1);
+}
+const PDF_COLOR = {
+  brand:[0.035,0.412,0.855], white:[1,1,1], whiteDim:[0.86,0.92,1], black:[0.09,0.1,0.12],
+  gray:[0.52,0.55,0.58], grayLabel:[0.6,0.63,0.66], good:[0.102,0.498,0.180], bad:[0.700,0.149,0.169],
+  zebra:[0.965,0.972,0.980], border:[0.75,0.77,0.8],
+};
+class SimplePdf {
+  constructor(){
+    this.objects = [];
+    this.pageRefs = [];
+    this.fontHelv = this._add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+    this.fontHelvBold = this._add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>');
+  }
+  _add(body){ this.objects.push(body); return this.objects.length; }
+  addPage(contentOps, w, h){
+    const contentBody = `<< /Length ${contentOps.length} >>\nstream\n${contentOps}endstream`;
+    const contentObj = this._add(contentBody);
+    const pageBody = `<< /Type /Page /Parent @@PAGES@@ 0 R /MediaBox [0 0 ${w} ${h}] /Resources << /Font << /F1 ${this.fontHelv} 0 R /F2 ${this.fontHelvBold} 0 R >> >> /Contents ${contentObj} 0 R >>`;
+    this.pageRefs.push(this._add(pageBody));
+  }
+  build(){
+    const pagesObjNum = this.objects.length + 1;
+    for(let i=0;i<this.objects.length;i++){ this.objects[i] = this.objects[i].replace('@@PAGES@@', String(pagesObjNum)); }
+    const kids = this.pageRefs.map(n=>`${n} 0 R`).join(' ');
+    this._add(`<< /Type /Pages /Kids [${kids}] /Count ${this.pageRefs.length} >>`);
+    const catalogNum = this._add(`<< /Type /Catalog /Pages ${pagesObjNum} 0 R >>`);
+    let out = '%PDF-1.4\n';
+    const offsets = [0];
+    for(let i=0;i<this.objects.length;i++){
+      offsets.push(out.length);
+      out += `${i+1} 0 obj\n${this.objects[i]}\nendobj\n`;
+    }
+    const xrefStart = out.length;
+    out += `xref\n0 ${this.objects.length+1}\n0000000000 65535 f \n`;
+    for(let i=1;i<=this.objects.length;i++) out += String(offsets[i]).padStart(10,'0')+' 00000 n \n';
+    out += `trailer\n<< /Size ${this.objects.length+1} /Root ${catalogNum} 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+    return out;
+  }
+}
+function pdfText(x,y,text,font,size,color){
+  color = color || PDF_COLOR.black;
+  return `${color[0]} ${color[1]} ${color[2]} rg BT /${font} ${size} Tf ${x.toFixed(2)} ${y.toFixed(2)} Td (${pdfEscape(text)}) Tj ET\n`;
+}
+function pdfTextRightAt(rightX,y,text,font,size,color){ return pdfText(rightX-textWidth(text,size,font==='F2'), y, text, font, size, color); }
+function pdfTextCenter(centerX,y,text,font,size,color){ return pdfText(centerX-textWidth(text,size,font==='F2')/2, y, text, font, size, color); }
+function pdfRect(x,y,w,h,color){ color = color||PDF_COLOR.white; return `${color[0]} ${color[1]} ${color[2]} rg ${x.toFixed(2)} ${y.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re f\n`; }
+
+/** Generic paginated PDF table document — used for every statement flavor
+ * (per-operator detailed/summary, per-terminal detailed/summary). */
+function renderPdfDocument(spec){
+  const W=595, H=842, M=40, usableW=W-2*M, rowH=18, headerH=22, bandH=56;
+  const linesPerPage = 30;
+  const rows = spec.rows.length ? spec.rows : [];
+  const pages = [];
+  for(let i=0;i<rows.length;i+=linesPerPage) pages.push(rows.slice(i,i+linesPerPage));
+  if(!pages.length) pages.push([]);
+  const totalPages = pages.length;
+  const pdf = new SimplePdf();
+
+  pages.forEach((pageRows, pageIdx)=>{
+    let ops = '';
+    ops += pdfRect(0, H-bandH, W, bandH, PDF_COLOR.brand);
+    ops += pdfText(M, H-bandH+32, 'GoStatement', 'F2', 19, PDF_COLOR.white);
+    ops += pdfText(M, H-bandH+14, spec.brandSub, 'F1', 9.5, PDF_COLOR.whiteDim);
+    ops += pdfTextRightAt(W-M, H-bandH+32, spec.docTitle, 'F2', 13, PDF_COLOR.white);
+    ops += pdfTextRightAt(W-M, H-bandH+14, spec.metaLine, 'F1', 8.5, PDF_COLOR.whiteDim);
+
+    let y = H-bandH-28;
+    if(pageIdx===0){
+      ops += pdfText(M, y, spec.partyLabel, 'F1', 7.5, PDF_COLOR.grayLabel);
+      ops += pdfText(M, y-14, spec.partyName, 'F2', 13, PDF_COLOR.black);
+      if(spec.partySub) ops += pdfText(M, y-27, spec.partySub, 'F1', 8.5, PDF_COLOR.gray);
+      ops += pdfTextRightAt(W-M, y, spec.bigLabel, 'F1', 7.5, PDF_COLOR.grayLabel);
+      ops += pdfTextRightAt(W-M, y-18, spec.bigValue, 'F2', 17, PDF_COLOR.brand);
+      y -= 46;
+    } else {
+      y -= 4;
+    }
+
+    ops += pdfRect(M, y-headerH+6, usableW, headerH, PDF_COLOR.brand);
+    let cx = M;
+    for(const col of spec.columns){
+      if(col.align==='right') ops += pdfTextRightAt(cx+col.w-6, y-9, col.label, 'F2', 8.5, PDF_COLOR.white);
+      else ops += pdfText(cx+6, y-9, col.label, 'F2', 8.5, PDF_COLOR.white);
+      cx += col.w;
+    }
+    y -= headerH;
+
+    pageRows.forEach((row,ri)=>{
+      if(ri%2===1) ops += pdfRect(M, y-rowH+4, usableW, rowH, PDF_COLOR.zebra);
+      let cx2 = M;
+      row.forEach((cellText,ci)=>{
+        const col = spec.columns[ci];
+        const color = (row.__colors && row.__colors[ci]) || PDF_COLOR.black;
+        if(col.align==='right') ops += pdfTextRightAt(cx2+col.w-6, y-rowH+7, String(cellText), 'F1', 9, color);
+        else ops += pdfText(cx2+6, y-rowH+7, String(cellText), 'F1', 9, color);
+        cx2 += col.w;
+      });
+      y -= rowH;
+    });
+
+    const isLastPage = pageIdx === totalPages-1;
+    if(isLastPage && spec.totalRows && spec.totalRows.length){
+      y -= 4;
+      ops += pdfRect(M, y, usableW, 1.1, PDF_COLOR.border);
+      spec.totalRows.forEach(tr=>{
+        y -= (tr.size ? tr.size+8 : rowH);
+        let cx3 = M;
+        tr.cells.forEach((cellText,ci)=>{
+          const col = spec.columns[ci];
+          const color = (tr.colors && tr.colors[ci]) || PDF_COLOR.black;
+          const font = tr.bold ? 'F2' : 'F1';
+          if(col.align==='right') ops += pdfTextRightAt(cx3+col.w-6, y+4, String(cellText), font, tr.size||9.5, color);
+          else if(cellText !== '') ops += pdfText(cx3+6, y+4, String(cellText), font, tr.size||9.5, color);
+          cx3 += col.w;
+        });
+      });
+    }
+    if(isLastPage && spec.footNote){
+      y -= 20;
+      ops += pdfTextCenter(W/2, y, spec.footNote.slice(0,140), 'F1', 8, PDF_COLOR.bad);
+    }
+    ops += pdfTextCenter(W/2, 28, 'This is a system-generated document from GoStatement. For queries, contact the terminal settlement office.', 'F1', 7.5, PDF_COLOR.gray);
+    ops += pdfTextCenter(W/2, 16, `Page ${pageIdx+1} of ${totalPages}`, 'F1', 7.5, PDF_COLOR.gray);
+    pdf.addPage(ops, W, H);
+  });
+  return pdf.build();
+}
+
+function buildStatementLines(terminal, company, rows){
+  const lines = [];
+  for(const r of rows){
+    const { deductions, additions } = rowDeductionsAdditions(terminal, company, r[1], r);
+    for(const a of additions) lines.push({ date:r[1], desc:a.label, amount:a.amount });
+    for(const d of deductions) lines.push({ date:r[1], desc:d.label, amount:d.amount });
+  }
+  return lines;
+}
+function summarizeStatementLines(lines){
+  const map = new Map();
+  for(const l of lines) map.set(l.desc, (map.get(l.desc)||0) + l.amount);
+  return Array.from(map.entries()).map(([desc,amount])=>({desc,amount}));
+}
+function buildOperatorStatementPdf(terminal, op, from, to, detailLevel){
+  const isSummary = detailLevel === 'summary';
+  const rows = rowsFor(terminal, op.company).filter(r=>inRange(r[1], from, to));
+  const rawLines = buildStatementLines(terminal, op.company, rows);
+  const lines = isSummary ? summarizeStatementLines(rawLines) : rawLines;
+  const totals = sumRows(rows);
+  const totalAdditions = totals.sales + Math.max(totals.undersales, 0);
+  const totalDeductions = Math.abs(totals.stdCharge + totals.manualCharge + Math.min(totals.undersales, 0));
+  const stmtNo = `STMT-${terminal}-${op.company.replace(/[^A-Za-z0-9]/g,'')}-${to.replace(/-/g,'')}${isSummary?'-SUM':''}`;
+  const issued = new Date().toLocaleDateString('en-MY', {day:'2-digit', month:'short', year:'numeric'});
+  const nonFinal = rows.filter(r => getEntryStatus(terminal, op.company, r[1]) !== 'finalized').length;
+  const mismatches = rows.filter(r => reconcileRow(terminal, op.company, r[1], r).mismatch).length;
+
+  const columns = isSummary
+    ? [{label:'DESCRIPTION', w:380, align:'left'}, {label:'AMOUNT', w:135, align:'right'}]
+    : [{label:'DATE', w:80, align:'left'}, {label:'DESCRIPTION', w:300, align:'left'}, {label:'AMOUNT', w:135, align:'right'}];
+  const tableRows = lines.map(l=>{
+    const row = isSummary ? [l.desc, fmtAbs(l.amount)] : [fmtDate(l.date), l.desc, fmtAbs(l.amount)];
+    row.__colors = isSummary ? [null, l.amount<0?PDF_COLOR.bad:PDF_COLOR.good] : [null,null, l.amount<0?PDF_COLOR.bad:PDF_COLOR.good];
+    return row;
+  });
+  const totalRows = [
+    { cells: isSummary?['Total Additions', fmtMoney(totalAdditions)] : ['','Total Additions', fmtMoney(totalAdditions)], colors: isSummary?[null,PDF_COLOR.good]:[null,null,PDF_COLOR.good] },
+    { cells: isSummary?['Total Deductions', '-'+fmtMoney(totalDeductions)] : ['','Total Deductions', '-'+fmtMoney(totalDeductions)], colors: isSummary?[null,PDF_COLOR.bad]:[null,null,PDF_COLOR.bad] },
+    { cells: isSummary?['Net Amount Payable', fmtMoney(totals.final)] : ['','Net Amount Payable', fmtMoney(totals.final)], bold:true, size:12 },
+  ];
+  let footNote = '';
+  if(nonFinal) footNote += `Note: includes ${nonFinal} day(s) not yet finalized. `;
+  if(mismatches) footNote += `${mismatches} day(s) have a reconciliation mismatch.`;
+
+  return renderPdfDocument({
+    docTitle: `SETTLEMENT STATEMENT${isSummary?' (SUMMARY)':''}`,
+    brandSub: TERMINALS[terminal].name,
+    metaLine: `${stmtNo}  |  Issued ${issued}  |  ${fmtDate(from)} - ${fmtDate(to)}`,
+    partyLabel: 'STATEMENT FOR', partyName: op.company, partySub: op.email,
+    bigLabel: 'NET AMOUNT PAYABLE', bigValue: fmtMoney(totals.final),
+    columns, rows: tableRows, totalRows, footNote,
+  });
+}
+function buildTerminalStatementPdf(terminal, from, to, detailLevel){
+  const isSummary = detailLevel === 'summary';
+  const opsInTerminal = STATE.operators.filter(o=>o.terminal===terminal);
+  const rows = rowsForTerminal(terminal).filter(r=>inRange(r[1], from, to));
+  const totals = sumRows(rows);
+  const activeCount = opsInTerminal.filter(o=>o.active).length;
+  const stmtNo = `TSTMT-${terminal}-${to.replace(/-/g,'')}${isSummary?'-SUM':''}`;
+  const issued = new Date().toLocaleDateString('en-MY', {day:'2-digit', month:'short', year:'numeric'});
+
+  let columns, tableRows, totalRows;
+  if(isSummary){
+    columns = [{label:'METRIC', w:380, align:'left'}, {label:'VALUE', w:135, align:'right'}];
+    tableRows = [
+      ['Active Operators', String(activeCount)],
+      ['Total Sales', fmtMoney(totals.sales)],
+      ['Total Charges', fmtMoney(-(totals.stdCharge+totals.manualCharge))],
+      ['Total Undersales', fmtMoney(totals.undersales)],
+    ];
+    totalRows = [{ cells:['Total Net Payout', fmtMoney(totals.final)], bold:true, size:12 }];
+  } else {
+    const byCompany = new Map();
+    for(const r of rows){ const cur = byCompany.get(r[0]) || {sales:0,charge:0,net:0}; cur.sales += r[2]; cur.charge += (r[3]+r[4]); cur.net += r[6]; byCompany.set(r[0], cur); }
+    const list = Array.from(byCompany.entries()).map(([c,v])=>({c,...v})).sort((a,b)=>b.net-a.net);
+    columns = [{label:'OPERATOR', w:220, align:'left'}, {label:'SALES', w:100, align:'right'}, {label:'CHARGES', w:100, align:'right'}, {label:'NET PAYOUT', w:95, align:'right'}];
+    tableRows = list.map(x=>[x.c, fmtAbs(x.sales), fmtAbs(x.charge), fmtAbs(x.net)]);
+    totalRows = [{ cells:['TOTAL', fmtAbs(totals.sales), fmtAbs(totals.stdCharge+totals.manualCharge), fmtAbs(totals.final)], bold:true, size:10 }];
+  }
+
+  return renderPdfDocument({
+    docTitle: `TERMINAL STATEMENT${isSummary?' (SUMMARY)':''}`,
+    brandSub: TERMINALS[terminal].name,
+    metaLine: `${stmtNo}  |  Issued ${issued}  |  ${fmtDate(from)} - ${fmtDate(to)}`,
+    partyLabel: 'TERMINAL', partyName: TERMINALS[terminal].name, partySub: `${activeCount} active operator(s)`,
+    bigLabel: 'NET PAYOUT', bigValue: fmtMoney(totals.final),
+    columns, rows: tableRows, totalRows, footNote: '',
+  });
+}
+async function generateStatementFor(terminal, op, detailLevel){
+  detailLevel = detailLevel || 'detailed';
+  const r = rangeForTerminal(terminal);
+  const from = VIEW.rangeMode==='custom' ? (VIEW.customFrom||r.from) : r.from;
+  const to = VIEW.rangeMode==='custom' ? (VIEW.customTo||r.to) : r.to;
+  const pdfBytes = buildOperatorStatementPdf(terminal, op, from, to, detailLevel);
+  const suffix = detailLevel==='summary' ? '-summary' : '';
+  await saveViaDownloads(pdfBytes, `statement-${op.company}-${to}${suffix}.pdf`);
+  toast('Statement PDF downloaded.');
+}
+async function generateTerminalStatement(terminal, detailLevel){
+  detailLevel = detailLevel || 'detailed';
+  const r = rangeForTerminal(terminal);
+  const from = VIEW.rangeMode==='custom' ? (VIEW.customFrom||r.from) : r.from;
+  const to = VIEW.rangeMode==='custom' ? (VIEW.customTo||r.to) : r.to;
+  const pdfBytes = buildTerminalStatementPdf(terminal, from, to, detailLevel);
+  const suffix = detailLevel==='summary' ? '-summary' : '';
+  await saveViaDownloads(pdfBytes, `terminal-statement-${terminal}-${to}${suffix}.pdf`);
+  toast('Terminal statement PDF downloaded.');
+}
+function openGenerateStatementModal(op){
+  openModal(`
+    <h3>Generate statement</h3>
+    <span class="sub">${esc(op.company)} — choose a level of detail for the current period.</span>
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      <button class="btn btn-primary" id="genDetailed" style="justify-content:flex-start;">Detailed — every addition/deduction, line by line</button>
+      <button class="btn" id="genSummary" style="justify-content:flex-start;">Summary — totals by category only</button>
+    </div>
+    <div class="modal-actions"><button class="btn" id="genCancel">Cancel</button></div>
+  `);
+  document.getElementById('genCancel').addEventListener('click', closeModal);
+  document.getElementById('genDetailed').addEventListener('click', ()=>{ closeModal(); generateStatementFor(op.terminal, op, 'detailed'); });
+  document.getElementById('genSummary').addEventListener('click', ()=>{ closeModal(); generateStatementFor(op.terminal, op, 'summary'); });
+}
+function openGenerateTerminalStatementModal(){
+  const options = VIEW.adminTerminal === 'ALL' ? ['KT','MS'] : [VIEW.adminTerminal];
+  openModal(`
+    <h3>Generate terminal statement</h3>
+    <span class="sub">Choose the terminal and level of detail for the current period.</span>
+    <div class="field"><label>Terminal</label>
+      <select id="termStmtTerminal">${options.map(t=>`<option value="${t}">${TERMINALS[t].name}</option>`).join('')}</select>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:10px; margin-top:12px;">
+      <button class="btn btn-primary" id="termGenDetailed" style="justify-content:flex-start;">Detailed — totals broken down by operator</button>
+      <button class="btn" id="termGenSummary" style="justify-content:flex-start;">Summary — terminal-wide totals only</button>
+    </div>
+    <div class="modal-actions"><button class="btn" id="termGenCancel">Cancel</button></div>
+  `);
+  document.getElementById('termGenCancel').addEventListener('click', closeModal);
+  document.getElementById('termGenDetailed').addEventListener('click', ()=>{ const t=document.getElementById('termStmtTerminal').value; closeModal(); generateTerminalStatement(t,'detailed'); });
+  document.getElementById('termGenSummary').addEventListener('click', ()=>{ const t=document.getElementById('termStmtTerminal').value; closeModal(); generateTerminalStatement(t,'summary'); });
+}
+
+/* ============================================================
+   OPERATOR DASHBOARD
+   ============================================================ */
+function operatorDashboardHtml(op){
+  const r = rangeForTerminal(op.terminal);
+  const rows = rowsFor(op.terminal, op.company).filter(row=>inRange(row[1], r.from, r.to));
+  const totals = sumRows(rows);
+  const charges = -(totals.stdCharge) + -(totals.manualCharge);
+  const prevLen = rows.length;
+  const allRows = rowsFor(op.terminal, op.company);
+  const idxTo = allRows.findIndex(rr=>rr[1]===r.to);
+  const prevRows = allRows.slice(Math.max(0, idxTo - prevLen*2 + 1), Math.max(0, idxTo - prevLen + 1));
+  const prevTotals = sumRows(prevRows);
+
+  function delta(curr, prev){
+    if(!prevRows.length) return '';
+    const diff = curr - prev;
+    if(Math.abs(diff) < 0.01) return `<span class="delta" style="color:var(--ink-faint)">No change vs. prior period</span>`;
+    const pct = prev !== 0 ? Math.abs(diff/prev*100) : 100;
+    const up = diff > 0;
+    return `<span class="delta" style="color:${up?'var(--good)':'var(--bad)'}">${up?'▲':'▼'} ${pct.toFixed(1)}% vs. prior period</span>`;
+  }
+
+  const tcolor = getCss(op.terminal==='KT'?'--kt':'--ms');
+
+  return `
+    <div id="topbar">
+      <div>
+        <h1>Dashboard — ${esc(op.company)}</h1>
+        <div class="desc"><span class="pill pill-${op.terminal.toLowerCase()}">${TERMINALS[op.terminal].name}</span> &middot; ${esc(op.email)}</div>
+      </div>
+      <div class="topbar-actions">${rangeControlHtml(op.terminal)}<button class="btn btn-accent btn-sm" id="btn-gen-statement">Download Statement (PDF)</button></div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="card kpi">
+        <div class="eyebrow">Total Sales</div>
+        <div class="value num" data-target="${totals.sales}" data-fmt="money">RM 0.00</div>
+        ${delta(totals.sales, prevTotals.sales)}
+      </div>
+      <div class="card kpi">
+        <div class="eyebrow">Charges (Terminal, Pickup, Manual)</div>
+        <div class="value num" style="color:var(--bad)" data-target="${-charges}" data-fmt="money">RM 0.00</div>
+        ${delta(charges, -(prevTotals.stdCharge)+ -(prevTotals.manualCharge))}
+      </div>
+      <div class="card kpi">
+        <div class="eyebrow">Undersales</div>
+        <div class="value num" data-target="${totals.undersales}" data-fmt="money">RM 0.00</div>
+        ${delta(totals.undersales, prevTotals.undersales)}
+      </div>
+      <div class="card kpi" style="border-color:${tcolor};">
+        <div class="eyebrow">Net Payout</div>
+        <div class="value num" style="color:var(--ink); background:${hexToRgba(tcolor,.14)}; display:inline-block; padding:2px 8px; border-radius:6px;" data-target="${totals.final}" data-fmt="money">RM 0.00</div>
+        ${delta(totals.final, prevTotals.final)}
+      </div>
+    </div>
+
+    <div class="panel-grid">
+      <div class="card panel">
+        <div class="panel-head">
+          <div>
+            <h3>Daily net payout trend</h3>
+            <div class="sub">${rows.length} day(s) in selected period &middot; click a row below for the full deductions/additions breakdown</div>
+          </div>
+          <div id="chart-tip" class="num" style="display:none; font-size:12.5px; color:var(--ink-soft); background:var(--surface-2); padding:4px 10px; border-radius:6px;"></div>
+        </div>
+        <canvas id="opChart" style="width:100%; height:200px; display:block;"></canvas>
+      </div>
+      <div class="card panel">
+        <div class="panel-head"><h3>Additions &amp; deductions for this period</h3></div>
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          ${breakdownRow('Ticket sales (addition)', totals.sales, 'var(--good)')}
+          ${breakdownRow('Terminal &amp; pickup charges (deduction)', -totals.stdCharge, 'var(--bad)')}
+          ${breakdownRow('Manual charges (deduction)', -totals.manualCharge, 'var(--bad)')}
+          ${breakdownRow('Undersales adjustment', totals.undersales, 'var(--ink-faint)')}
+          <div style="border-top:1px solid var(--border); padding-top:12px; display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-weight:700; font-size:13.5px;">Net payout</span>
+            <span class="num" style="font-weight:700; font-size:16px;">${fmtMoney(totals.final)}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+function breakdownRow(label, val, color){
+  return `
+    <div>
+      <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:5px;">
+        <span style="color:var(--ink-soft);">${label}</span>
+        <span class="num" style="font-weight:600;">${fmtMoney(val)}</span>
+      </div>
+      <div style="height:6px; border-radius:4px; background:var(--surface-2); overflow:hidden;">
+        <div style="height:100%; width:${Math.min(100, Math.abs(val)/20)}%; background:${color};"></div>
+      </div>
+    </div>`;
+}
+
+function ledgerTableHtml(rows, opts){
+  opts = opts || {};
+  const showCompany = !!opts.showCompany;
+  const showTerminal = !!opts.showTerminal;
+  const fixedTerminal = opts.terminal || null;
+  const totals = sumRows(rows);
+  return `
+    <div class="scrollx">
+      <table>
+        <thead><tr>
+          <th>Date</th>
+          ${showTerminal? '<th>Terminal</th>' : ''}
+          ${showCompany? '<th>Operator</th>' : ''}
+          <th>Sales</th>
+          <th>Terminal/Pickup Charges</th>
+          <th>Manual Charges</th>
+          <th>Undersales</th>
+          <th>Net Payout</th>
+          <th>Status</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(r => {
+            const term = fixedTerminal || r[7] || '';
+            const status = getEntryStatus(term, r[0], r[1]);
+            const recon = reconcileRow(term, r[0], r[1], r);
+            const rowBg = recon.mismatch ? 'background:var(--bad-soft);' : '';
+            return `
+            <tr class="${term ? 'row-'+term.toLowerCase() : ''}" data-terminal="${term}" data-company="${esc(r[0])}" data-date="${r[1]}" style="cursor:pointer; ${rowBg}" ${recon.mismatch ? `title="Mismatch: recorded ${fmtMoney(r[6])} vs expected ${fmtMoney(recon.expected)} (diff ${fmtMoney(recon.diff)})"` : ''}>
+              <td>${recon.mismatch ? '⚠️ ' : ''}${fmtDate(r[1])}</td>
+              ${showTerminal? `<td><span class="pill pill-${term.toLowerCase()}">${esc(term)}</span></td>` : ''}
+              ${showCompany? `<td style="text-align:left;">${esc(r[0])}</td>` : ''}
+              <td class="num">${fmtMoney(r[2])}</td>
+              <td class="num" style="color:var(--bad);">${fmtMoney(r[3])}</td>
+              <td class="num" style="color:var(--bad);">${fmtMoney(r[4])}</td>
+              <td class="num">${fmtMoney(r[5])}</td>
+              <td class="num" style="font-weight:700; ${recon.mismatch?'color:var(--bad);':''}">${fmtMoney(r[6])}</td>
+              <td><span class="pill ${STATUS_PILL[status]}">${STATUS_LABEL[status]}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+        <tfoot><tr>
+          <td>Total</td>
+          ${showTerminal? '<td></td>' : ''}
+          ${showCompany? '<td></td>' : ''}
+          <td class="num">${fmtMoney(totals.sales)}</td>
+          <td class="num" style="color:var(--bad);">${fmtMoney(totals.stdCharge)}</td>
+          <td class="num" style="color:var(--bad);">${fmtMoney(totals.manualCharge)}</td>
+          <td class="num">${fmtMoney(totals.undersales)}</td>
+          <td class="num">${fmtMoney(totals.final)}</td>
+          <td></td>
+        </tr></tfoot>
+      </table>
+    </div>
+    ${!rows.length ? '<div class="empty">No records in this period.</div>' : ''}
+  `;
+}
+
+function operatorLedgerHtml(op){
+  const r = rangeForTerminal(op.terminal);
+  let rows = rowsFor(op.terminal, op.company).filter(row=>inRange(row[1], r.from, r.to));
+  rows = VIEW.sortDir === 'asc' ? rows : rows.slice().reverse();
+  return `
+    <div id="topbar">
+      <div>
+        <h1>Settlement Ledger</h1>
+        <div class="desc">${esc(op.company)} &middot; <span class="pill pill-${op.terminal.toLowerCase()}">${TERMINALS[op.terminal].name}</span></div>
+      </div>
+      <div class="topbar-actions">
+        ${rangeControlHtml(op.terminal)}
+        <button class="btn btn-sm" id="btn-sort">${VIEW.sortDir==='desc'?'Newest first':'Oldest first'}</button>
+        <button class="btn btn-sm" id="btn-export-csv">Download CSV</button>
+        <button class="btn btn-accent btn-sm" id="btn-gen-statement">Download Statement (PDF)</button>
+      </div>
+    </div>
+    <div class="card table-card">
+      ${ledgerTableHtml(rows, {terminal: op.terminal})}
+    </div>
+  `;
+}
+
+/* ============================================================
+   ADMIN — OVERVIEW
+   ============================================================ */
+function terminalsInScope(){ return VIEW.adminTerminal === 'ALL' ? ['KT','MS'] : [VIEW.adminTerminal]; }
+function adminOverviewHtml(){
+  const terms = terminalsInScope();
+  let rows = [];
+  for(const t of terms){
+    const r = rangeForTerminal(t);
+    rows = rows.concat(rowsForTerminal(t).filter(row=>inRange(row[1], r.from, r.to)).map(row=>[...row.slice(0,7), t]));
+  }
+  const totals = sumRows(rows);
+  const activeOps = STATE.operators.filter(o=>o.active && terms.includes(o.terminal)).length;
+
+  const byOp = new Map();
+  for(const row of rows){ const key = row[7]+'::'+row[0]; byOp.set(key, (byOp.get(key)||0) + row[6]); }
+  const leaderboard = Array.from(byOp.entries()).map(([k,v])=>({label:k.split('::')[1], v, color: getCss(k.startsWith('KT')?'--kt':'--ms')})).sort((a,b)=>b.v-a.v).slice(0,8);
+
+  const series = terms.map(t=>{
+    const r = rangeForTerminal(t);
+    const trows = rowsForTerminal(t).filter(row=>inRange(row[1], r.from, r.to));
+    const byDate = new Map();
+    for(const row of trows){ byDate.set(row[1], (byDate.get(row[1])||0) + row[6]); }
+    const points = Array.from(byDate.entries()).sort((a,b)=>a[0]<b[0]?-1:1).map(([d,v])=>({d,v}));
+    return { label: TERMINALS[t].short, color: getCss(t==='KT'?'--kt':'--ms'), points };
+  });
+
+  return `
+    <div id="topbar">
+      <div>
+        <h1>Settlement Overview</h1>
+        <div class="desc">Admin view across terminals &middot; ${activeOps} active operator(s)</div>
+      </div>
+      <div class="topbar-actions">
+        ${terminalSelectHtml()}
+        ${rangeControlHtml(terms[0])}
+        <button class="btn btn-accent btn-sm" id="btn-terminal-statement">Generate Terminal Statement</button>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="card kpi"><div class="eyebrow">Active Operators</div><div class="value num" data-target="${activeOps}" data-fmt="int">0</div></div>
+      <div class="card kpi"><div class="eyebrow">Total Sales</div><div class="value num" data-target="${totals.sales}" data-fmt="money">RM 0.00</div></div>
+      <div class="card kpi"><div class="eyebrow">Total Charges Collected</div><div class="value num" style="color:var(--bad);" data-target="${-(totals.stdCharge+totals.manualCharge)}" data-fmt="money">RM 0.00</div></div>
+      <div class="card kpi" style="border-color:var(--accent);"><div class="eyebrow">Total Net Payout</div><div class="value num" data-target="${totals.final}" data-fmt="money">RM 0.00</div></div>
+    </div>
+
+    <div class="panel-grid">
+      <div class="card panel">
+        <div class="panel-head">
+          <div><h3>Daily net payout trend</h3><div class="sub">${series[0] ? series[0].points.length : 0} day(s)</div></div>
+          <div id="chart-tip" class="num" style="display:none; font-size:12.5px; color:var(--ink-soft); background:var(--surface-2); padding:4px 10px; border-radius:6px;"></div>
+        </div>
+        <canvas id="adminChart" style="width:100%; height:190px; display:block;"></canvas>
+        <div class="legend-row" style="margin-top:10px;">
+          ${series.map(s=>`<span class="legend-item"><span class="legend-dot" style="background:${s.color};"></span>${s.label}</span>`).join('')}
+        </div>
+      </div>
+      <div class="card panel">
+        <div class="panel-head"><h3>Top operators (net payout)</h3></div>
+        <canvas id="leaderChart" style="width:100%; height:${Math.max(180, leaderboard.length*34)}px; display:block;"></canvas>
+      </div>
+    </div>
+  `;
+}
+function terminalSelectHtml(){
+  return `
+    <select id="adminTerminalSel" class="btn btn-sm" style="font-weight:600;">
+      <option value="ALL" ${VIEW.adminTerminal==='ALL'?'selected':''}>Both Terminals</option>
+      <option value="KT" ${VIEW.adminTerminal==='KT'?'selected':''}>Kuala Terengganu Bus Terminal</option>
+      <option value="MS" ${VIEW.adminTerminal==='MS'?'selected':''}>Melaka Sentral</option>
+    </select>`;
+}
+
+/* ============================================================
+   ADMIN — DIRECTORY
+   ============================================================ */
+function opRangeTotal(op){
+  const r = rangeForTerminal(op.terminal);
+  const rows = rowsFor(op.terminal, op.company).filter(row=>inRange(row[1], r.from, r.to));
+  return sumRows(rows);
+}
+function adminDirectoryHtml(){
+  let ops = STATE.operators.slice();
+  if(VIEW.dirTerminal !== 'ALL') ops = ops.filter(o=>o.terminal===VIEW.dirTerminal);
+  if(VIEW.dirSearch) { const q = VIEW.dirSearch.toLowerCase(); ops = ops.filter(o => o.company.toLowerCase().includes(q) || o.email.toLowerCase().includes(q)); }
+  ops.sort((a,b)=> opRangeTotal(b).final - opRangeTotal(a).final);
+
+  return `
+    <div id="topbar">
+      <div><h1>Operator Directory</h1><div class="desc">Manage sign-in accounts for every bus operator</div></div>
+      <div class="topbar-actions"><button class="btn btn-accent btn-sm" id="btn-add-operator">+ Add Operator</button></div>
+    </div>
+    <div class="card table-card">
+      <div class="table-toolbar">
+        <input type="search" id="dirSearch" placeholder="Search operator or email…" value="${esc(VIEW.dirSearch)}">
+        <select id="dirTerminal">
+          <option value="ALL" ${VIEW.dirTerminal==='ALL'?'selected':''}>All terminals</option>
+          <option value="KT" ${VIEW.dirTerminal==='KT'?'selected':''}>KT Terminal</option>
+          <option value="MS" ${VIEW.dirTerminal==='MS'?'selected':''}>Melaka Sentral</option>
+        </select>
+        <span style="margin-left:auto; font-size:12.5px; color:var(--ink-faint);">${ops.length} operator(s)</span>
+      </div>
+      <div class="scrollx">
+        <table>
+          <thead><tr>
+            <th style="text-align:left;">Operator</th><th>Terminal</th><th>Sales (period)</th><th>Net Payout (period)</th><th>Status</th><th>Password</th><th style="text-align:right;">Actions</th>
+          </tr></thead>
+          <tbody>
+            ${ops.map(o=>{
+              const t = opRangeTotal(o);
+              return `
+              <tr class="row-${o.terminal.toLowerCase()}">
+                <td style="text-align:left;">
+                  <div class="op-row">
+                    <div class="op-badge">${initials(o.company)}</div>
+                    <div class="op-meta"><div class="name">${esc(o.company)}</div><div class="email">${esc(o.email)}</div></div>
+                  </div>
+                </td>
+                <td><span class="pill pill-${o.terminal.toLowerCase()}">${o.terminal}</span></td>
+                <td class="num">${fmtMoney(t.sales)}</td>
+                <td class="num" style="font-weight:700;">${fmtMoney(t.final)}</td>
+                <td>${o.active ? '<span class="pill pill-good">Active</span>' : '<span class="pill pill-bad">Inactive</span>'}</td>
+                <td>${o.mustChange ? '<span class="pill pill-accent">Temporary</span>' : '<span class="pill pill-neutral">Set</span>'}</td>
+                <td style="text-align:right;">
+                  <div style="display:flex; gap:6px; justify-content:flex-end;">
+                    <button class="btn btn-sm" data-act="view" data-id="${o.id}">Dashboard</button>
+                    <button class="btn btn-sm" data-act="statement" data-id="${o.id}">Statement</button>
+                    <button class="btn btn-sm" data-act="reset" data-id="${o.id}">Reset password</button>
+                    <button class="btn btn-sm ${o.active?'btn-danger':''}" data-act="toggle" data-id="${o.id}">${o.active?'Deactivate':'Activate'}</button>
+                  </div>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${!ops.length ? '<div class="empty">No operator matches this search.</div>' : ''}
+    </div>
+  `;
+}
+
+/* ============================================================
+   ADMIN — LEDGER (all operators, chosen terminal)
+   ============================================================ */
+function adminLedgerHtml(){
+  const terms = terminalsInScope();
+  let rows = [];
+  for(const t of terms){
+    const r = rangeForTerminal(t);
+    rows = rows.concat(rowsForTerminal(t).filter(row=>inRange(row[1], r.from, r.to)).map(row=>[...row.slice(0,7), t]));
+  }
+  if(VIEW.ledgerSearch){ const q = VIEW.ledgerSearch.toLowerCase(); rows = rows.filter(r => r[0].toLowerCase().includes(q)); }
+  rows = VIEW.sortDir === 'asc' ? rows.slice().sort((a,b)=>a[1]<b[1]?-1:1) : rows.slice().sort((a,b)=>a[1]<b[1]?1:-1);
+  return `
+    <div id="topbar">
+      <div><h1>Settlement Ledger — All Operators</h1><div class="desc">${terms.map(t=>TERMINALS[t].short).join(' + ')}</div></div>
+      <div class="topbar-actions">
+        ${terminalSelectHtml()}
+        ${rangeControlHtml(terms[0])}
+        <button class="btn btn-sm" id="btn-sort">${VIEW.sortDir==='desc'?'Newest first':'Oldest first'}</button>
+        <button class="btn btn-sm" id="btn-export-csv">Download CSV</button>
+        <button class="btn btn-accent btn-sm" id="btn-export-xls">Download Excel</button>
+      </div>
+    </div>
+    <div class="card table-card">
+      <div class="table-toolbar">
+        <input type="text" id="ledgerSearch" placeholder="Filter by operator code…" value="${esc(VIEW.ledgerSearch)}">
+        <button class="btn btn-sm" id="btn-bulk-prefinalize">Pre-finalize visible rows</button>
+        <button class="btn btn-sm" id="btn-bulk-finalize">Finalize visible rows</button>
+        <span style="margin-left:auto; font-size:12.5px; color:var(--ink-faint);">${rows.length} row(s)</span>
+      </div>
+      ${ledgerTableHtml(rows, {showCompany:true, showTerminal:true})}
+    </div>
+  `;
+}
+
+/* ============================================================
+   ADMIN — RECONCILIATION (auto-detect mismatches, search manually)
+   ============================================================ */
+function reconTableRows(list, tone){
+  return `
+    <div class="scrollx">
+      <table>
+        <thead><tr>
+          <th>Date</th><th>Terminal</th><th style="text-align:left;">Operator</th><th>Recorded</th><th>Expected</th><th>Difference</th><th style="text-align:right;">Actions</th>
+        </tr></thead>
+        <tbody>
+          ${list.map(({row,recon})=>`
+            <tr class="row-${row[7].toLowerCase()}" style="background:var(--${tone}-soft);">
+              <td>${fmtDate(row[1])}</td>
+              <td><span class="pill pill-${row[7].toLowerCase()}">${row[7]}</span></td>
+              <td style="text-align:left;">${esc(row[0])}</td>
+              <td class="num">${fmtMoney(row[6])}</td>
+              <td class="num">${fmtMoney(recon.expected)}</td>
+              <td class="num" style="font-weight:700; color:var(--${tone});">${fmtMoney(recon.diff)}</td>
+              <td style="text-align:right;">
+                <div style="display:flex; gap:6px; justify-content:flex-end;">
+                  <button class="btn btn-sm" data-recon-view="${row[7]}|${row[0]}|${row[1]}">View</button>
+                  <button class="btn btn-sm" data-recon-fix="${row[7]}|${row[0]}|${row[1]}">Fix in Daily Entry</button>
+                </div>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+function adminReconcileHtml(){
+  const terms = terminalsInScope();
+  let allRows = [];
+  for(const t of terms){
+    const r = rangeForTerminal(t);
+    allRows = allRows.concat(rowsForTerminal(t).filter(row=>inRange(row[1], r.from, r.to)).map(row=>[...row.slice(0,7), t]));
+  }
+  const checked = allRows.length;
+  let annotated = allRows.map(r=>({ row:r, recon: reconcileRow(r[7], r[0], r[1], r) }));
+  if(VIEW.reconcileSearch){
+    const q = VIEW.reconcileSearch.toLowerCase();
+    annotated = annotated.filter(x=>x.row[0].toLowerCase().includes(q));
+  }
+  const mismatched = annotated.filter(x=>x.recon.mismatch).sort((a,b)=> Math.abs(b.recon.diff) - Math.abs(a.recon.diff));
+  const pending = annotated.filter(x=>x.recon.pending).sort((a,b)=> a.row[1]<b.row[1]?-1:1);
+
+  return `
+    <div id="topbar">
+      <div>
+        <h1>Reconciliation</h1>
+        <div class="desc">Automatically compares each day's recorded net payout against sales + charges + undersales + adjustments.</div>
+      </div>
+      <div class="topbar-actions">
+        ${terminalSelectHtml()}
+        ${rangeControlHtml(terms[0])}
+      </div>
+    </div>
+    <div class="kpi-grid">
+      <div class="card kpi"><div class="eyebrow">Rows Checked</div><div class="value num" data-target="${checked}" data-fmt="int">0</div></div>
+      <div class="card kpi" style="border-color:var(--bad);"><div class="eyebrow">Reconciliation Mismatches</div><div class="value num" style="color:${mismatched.length?'var(--bad)':'var(--good)'};" data-target="${mismatched.length}" data-fmt="int">0</div></div>
+      <div class="card kpi" style="border-color:var(--accent);"><div class="eyebrow">Pending Settlements</div><div class="value num" style="color:var(--accent);" data-target="${pending.length}" data-fmt="int">0</div></div>
+    </div>
+    <div class="card table-card">
+      <div class="table-toolbar">
+        <input type="text" id="reconcileSearch" placeholder="Filter by operator code…" value="${esc(VIEW.reconcileSearch)}">
+        <span style="margin-left:auto; font-size:12.5px; color:var(--ink-faint);">${mismatched.length} mismatch row(s)</span>
+      </div>
+      <div style="padding:16px 22px 0;"><h3 style="font-size:14.5px; color:var(--bad);">⚠ Reconciliation mismatches — figures do not tally</h3></div>
+      ${mismatched.length ? reconTableRows(mismatched, 'bad') : '<div class="empty">No reconciliation mismatches found in this period.</div>'}
+    </div>
+    <div class="card table-card">
+      <div class="table-toolbar">
+        <span style="font-size:12.5px; color:var(--ink-faint);">Recorded net payout is RM 0.00 while sales/charges suggest an amount is owed — usually means the day is awaiting settlement rather than an error.</span>
+        <span style="margin-left:auto; font-size:12.5px; color:var(--ink-faint);">${pending.length} pending row(s)</span>
+      </div>
+      <div style="padding:6px 22px 0;"><h3 style="font-size:14.5px; color:var(--accent);">⏳ Pending settlements</h3></div>
+      ${pending.length ? reconTableRows(pending.slice(0,200), 'accent') : '<div class="empty">No pending settlements in this period.</div>'}
+      ${pending.length>200 ? `<div style="font-size:12px; color:var(--ink-faint); padding:0 22px 16px;">Showing the first 200 of ${pending.length}. Narrow the date range or search to see more.</div>` : ''}
+    </div>
+  `;
+}
+
+/* ============================================================
+   ADMIN — DAILY ENTRY (manual form + Excel import)
+   ============================================================ */
+let DRAFT_KEY = null;
+let DRAFT_ADJUSTMENTS = [];
+let DRAFT_NOTE = '';
+function syncDraftForSelection(terminal, company, date){
+  const key = entryKey(terminal, company, date);
+  if(DRAFT_KEY === key) return;
+  DRAFT_KEY = key;
+  const e = STATE.entries[key];
+  DRAFT_ADJUSTMENTS = (e && e.adjustments) ? e.adjustments.map(a=>({...a})) : [];
+  DRAFT_NOTE = (e && e.note) || '';
+}
+function adminEntryHtml(){
+  const f = VIEW.entryForm;
+  const opsInTerminal = STATE.operators.filter(o=>o.terminal===f.terminal).sort((a,b)=>a.company.localeCompare(b.company));
+  if(!f.operatorId && opsInTerminal.length) f.operatorId = opsInTerminal[0].id;
+  const op = findOperatorById(f.operatorId);
+  const maxD = allDatesFor(f.terminal).slice(-1)[0];
+  if(!f.date) f.date = maxD;
+
+  let existing = null, existingStatus = 'draft';
+  if(op && f.date){
+    const row = rowsFor(f.terminal, op.company).find(r=>r[1]===f.date);
+    if(row){ existing = { sales:row[2], stdCharge:row[3], manualCharge:row[4], undersales:row[5], final:row[6], isOverride: !!row[7] }; existingStatus = getEntryStatus(f.terminal, op.company, f.date); }
+  }
+  if(op && f.date) syncDraftForSelection(f.terminal, op.company, f.date);
+
+  const recentKeys = Object.keys(STATE.entries).filter(k=>k.startsWith(f.terminal+'|')).sort().reverse().slice(0,12);
+
+  return `
+    <div id="topbar">
+      <div>
+        <h1>Daily Entry</h1>
+        <div class="desc">Add a new day by hand, or import the terminal's own settlement .xlsx directly — every charge column (including one-off compensation) is kept and shown in full. Move an entry from Draft to Pre-Finalized to Finalized as it gets reviewed.</div>
+      </div>
+    </div>
+    <div class="panel-grid">
+      <div class="card panel">
+        <div class="panel-head">
+          <div><h3>${existing ? 'Edit entry' : 'New entry'}</h3><div class="sub">${existing ? 'Existing figures loaded — adjust and save to override.' : 'No entry yet for this operator/date.'}</div></div>
+          ${existing ? `<span class="pill ${STATUS_PILL[existingStatus]}">${STATUS_LABEL[existingStatus]}</span>` : ''}
+        </div>
+        <form id="entryForm" style="display:flex; flex-direction:column; gap:14px;">
+          <div class="field-row">
+            <div class="field"><label>Terminal</label>
+              <select id="entryTerminal">
+                <option value="KT" ${f.terminal==='KT'?'selected':''}>Kuala Terengganu Bus Terminal</option>
+                <option value="MS" ${f.terminal==='MS'?'selected':''}>Melaka Sentral</option>
+              </select>
+            </div>
+            <div class="field"><label>Date</label><input type="date" id="entryDate" value="${f.date||''}"></div>
+          </div>
+          <div class="field">
+            <label>Operator</label>
+            <select id="entryOperator">
+              ${opsInTerminal.map(o=>`<option value="${o.id}" ${o.id===f.operatorId?'selected':''}>${esc(o.company)} — ${esc(o.email)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>Ticket sales (RM)</label><input type="number" step="0.01" id="entrySales" value="${existing?existing.sales:''}" placeholder="0.00"></div>
+            <div class="field"><label>Undersales (RM)</label><input type="number" step="0.01" id="entryUndersales" value="${existing?existing.undersales:''}" placeholder="0.00"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>Terminal/pickup charges (RM, positive)</label><input type="number" step="0.01" id="entryStdCharge" value="${existing?Math.abs(existing.stdCharge):''}" placeholder="0.00"></div>
+            <div class="field"><label>Manual charges (RM, positive)</label><input type="number" step="0.01" id="entryManualCharge" value="${existing?Math.abs(existing.manualCharge):''}" placeholder="0.00"></div>
+          </div>
+          <div class="field">
+            <label>Additional adjustments — compensation, over-deduction correction, overpaid/refund, etc.</label>
+            <div id="adjustmentsList" style="display:flex; flex-direction:column; gap:8px;">
+              ${DRAFT_ADJUSTMENTS.map((a,i)=>`
+                <div style="display:flex; gap:8px; align-items:center;">
+                  <input type="text" class="adj-label" data-idx="${i}" value="${esc(a.label||'')}" placeholder="Label (e.g. Compensation - equipment damage)" style="flex:2; padding:9px 11px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); color:var(--ink); font-size:13.5px;">
+                  <input type="number" step="0.01" class="adj-amount" data-idx="${i}" value="${a.amount}" placeholder="Amount (+ addition / − charge)" style="flex:1; padding:9px 11px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); color:var(--ink); font-size:13.5px;">
+                  <button type="button" class="btn btn-sm btn-danger" data-remove-adj="${i}">Remove</button>
+                </div>`).join('')}
+              ${!DRAFT_ADJUSTMENTS.length ? '<div style="font-size:12.5px; color:var(--ink-faint);">No additional adjustments for this entry.</div>' : ''}
+            </div>
+            <button type="button" class="btn btn-sm" id="btnAddAdjustment" style="margin-top:8px; align-self:flex-start;">+ Add adjustment</button>
+          </div>
+          <div class="field"><label>Remarks (optional) — e.g. which sale this undersales deduction relates to</label>
+            <textarea id="entryNote" rows="2" placeholder="e.g. Undersales deduction relates to shortfall from 01 Sep sale">${esc(DRAFT_NOTE)}</textarea>
+          </div>
+          <div class="field"><label>Net payout (RM) — auto-calculated, editable</label><input type="number" step="0.01" id="entryFinal" value="${existing?existing.final:''}" placeholder="0.00"></div>
+          <div class="field"><label>Status</label>
+            <select id="entryStatus">
+              <option value="draft" ${existingStatus==='draft'?'selected':''}>Draft</option>
+              <option value="prefinalized" ${existingStatus==='prefinalized'?'selected':''}>Pre-Finalized</option>
+              <option value="finalized" ${existingStatus==='finalized'?'selected':''}>Finalized</option>
+            </select>
+          </div>
+          <div class="modal-actions" style="justify-content:flex-start;">
+            <button type="submit" class="btn btn-primary">Save entry</button>
+            <button type="button" class="btn" id="entryAutoCalc">Auto-calculate net</button>
+            ${existing && existing.isOverride ? '<button type="button" class="btn btn-danger" id="entryDelete">Revert to original</button>' : ''}
+          </div>
+        </form>
+      </div>
+      <div class="card panel">
+        <div class="panel-head"><h3>Recently edited entries</h3><div class="sub">${TERMINALS[f.terminal].short}</div></div>
+        ${recentKeys.length ? `
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            ${recentKeys.map(k=>{
+              const parts = k.split('|'); const company = parts.slice(1,-1).join('|'); const date = parts[parts.length-1];
+              const e = STATE.entries[k];
+              return `<div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border); font-size:13px;">
+                <div><b>${esc(company)}</b><br><span style="color:var(--ink-faint); font-size:12px;">${fmtDate(date)}</span></div>
+                <div style="text-align:right;"><div class="num">${fmtMoney(e.final)}</div><span class="pill ${STATUS_PILL[e.status||'draft']}" style="margin-top:4px;">${STATUS_LABEL[e.status||'draft']}</span></div>
+              </div>`;
+            }).join('')}
+          </div>
+        ` : `<div class="empty">No manual edits yet for this terminal.</div>`}
+      </div>
+    </div>
+
+    <div class="card panel" style="margin-top:0;">
+      <div class="panel-head">
+        <div><h3>Import from Excel (.xlsx)</h3><div class="sub">Reads the terminal's own settlement export in your browser — no upload to any server. Handles any number of charge columns (terminal, pickup, parking, manual, compensation, etc.) exactly as labeled in the file.</div></div>
+      </div>
+      <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:14px;">
+        <input type="file" id="importFile" accept=".xlsx">
+        <span id="importStatus" style="font-size:13px; color:var(--ink-faint);"></span>
+      </div>
+      <div id="importPreviewWrap"></div>
+    </div>
+  `;
+}
+
+function importPreviewHtml(){
+  if(!IMPORT_PREVIEW) return '';
+  const p = IMPORT_PREVIEW;
+  const terminal = p.terminal || 'KT';
+  const dates = Array.from(new Set(p.records.map(r=>r.date))).sort();
+  const companies = Array.from(new Set(p.records.map(r=>r.company)));
+  const existingCompanies = new Set(STATE.operators.filter(o=>o.terminal===terminal).map(o=>o.company));
+  const newCompanies = companies.filter(c=>!existingCompanies.has(c));
+  const preview = p.records.slice(0, 30);
+
+  return `
+    <div style="border:1px solid var(--border); border-radius:10px; padding:16px; background:var(--surface-2);">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+        <div>
+          <div style="font-weight:700; font-size:14px;">Parsed ${p.records.length} row(s) &middot; ${dates.length} date(s) &middot; ${companies.length} operator(s)</div>
+          <div style="font-size:12.5px; color:var(--ink-soft);">${fmtDate(dates[0])} – ${fmtDate(dates[dates.length-1])}${newCompanies.length ? ` &middot; ${newCompanies.length} new operator account(s) will be created` : ''}</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <label style="font-size:13px; font-weight:600; color:var(--ink-soft);">Terminal:</label>
+          <select id="importTerminalSel">
+            <option value="KT" ${terminal==='KT'?'selected':''}>Kuala Terengganu Bus Terminal</option>
+            <option value="MS" ${terminal==='MS'?'selected':''}>Melaka Sentral</option>
+          </select>
+          <label style="font-size:13px; font-weight:600; color:var(--ink-soft); margin-left:8px;">Import as:</label>
+          <select id="importStatusSel">
+            <option value="draft" selected>Draft</option>
+            <option value="prefinalized">Pre-Finalized</option>
+            <option value="finalized">Finalized</option>
+          </select>
+        </div>
+      </div>
+      ${newCompanies.length ? `<div style="margin-bottom:12px; font-size:12.5px;"><span class="pill pill-accent">New</span> ${newCompanies.map(esc).join(', ')}</div>` : ''}
+      <div class="scrollx" style="max-height:260px; overflow-y:auto; border:1px solid var(--border); border-radius:8px;">
+        <table>
+          <thead><tr><th>Date</th><th style="text-align:left;">Operator</th><th>Sales</th><th>Charges</th><th>Net Payout</th></tr></thead>
+          <tbody>
+            ${preview.map(r=>`<tr>
+              <td>${fmtDate(r.date)}</td>
+              <td style="text-align:left;">${esc(r.company)}</td>
+              <td class="num">${fmtMoney(r.sales)}</td>
+              <td class="num" style="color:var(--bad);">${fmtMoney(r.stdCharge+r.manualCharge)}</td>
+              <td class="num" style="font-weight:700;">${fmtMoney(r.final)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${p.records.length>30 ? `<div style="font-size:12px; color:var(--ink-faint); margin-top:8px;">…and ${p.records.length-30} more row(s), all will be imported.</div>` : ''}
+      <div class="modal-actions" style="justify-content:flex-start; margin-top:16px;">
+        <button class="btn btn-primary" id="btnConfirmImport">Import ${p.records.length} row(s)</button>
+        <button class="btn" id="btnCancelImport">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+/* ============================================================
+   ADMIN — ADMIN USERS
+   ============================================================ */
+function adminUsersHtml(){
+  const admins = STATE.admins;
+  return `
+    <div id="topbar">
+      <div><h1>Admins</h1><div class="desc">People who can manage both terminals</div></div>
+      <div class="topbar-actions"><button class="btn btn-accent btn-sm" id="btn-add-admin">+ Add Admin</button></div>
+    </div>
+    <div class="card table-card">
+      <div class="scrollx">
+        <table>
+          <thead><tr><th style="text-align:left;">Name</th><th style="text-align:left;">Login ID</th><th style="text-align:left;">Email</th><th>Status</th><th style="text-align:right;">Actions</th></tr></thead>
+          <tbody>
+            ${admins.map(a=>`
+              <tr>
+                <td style="text-align:left;">
+                  <div class="op-row"><div class="op-badge">${initials(a.name||a.id)}</div><div class="op-meta"><div class="name">${esc(a.name||a.id)}</div></div></div>
+                </td>
+                <td style="text-align:left;">${esc(a.id)}</td>
+                <td style="text-align:left;">${a.email? esc(a.email) : '<span style="color:var(--ink-faint);">—</span>'}</td>
+                <td>${a.active!==false ? '<span class="pill pill-good">Active</span>' : '<span class="pill pill-bad">Inactive</span>'}</td>
+                <td style="text-align:right;">
+                  <button class="btn btn-sm ${a.active!==false?'btn-danger':''}" data-admin-act="toggle" data-admin-id="${a.id}" ${admins.filter(x=>x.active!==false).length<=1 && a.active!==false ? 'disabled title="At least one active admin is required"' : ''}>${a.active!==false?'Deactivate':'Activate'}</button>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card panel">
+      <div class="panel-head"><h3>Backup &amp; Sync</h3></div>
+      <div style="font-size:13px; color:var(--ink-soft); line-height:1.6; margin-bottom:16px;">
+        This portal stores all data (operators, entries, adjustments, admins) in <b>this browser only</b> — there is no shared server yet, so a different browser, device, or person opening the same link starts from the original seed data and will not see your edits. To move your current data to another browser or device: <b>Export</b> a snapshot here, then open this same link there and <b>Import</b> the file. This is a manual sync point, not live sharing — repeat it whenever you want another device caught up.
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <button class="btn btn-accent btn-sm" id="btn-export-data">Export data snapshot</button>
+        <input type="file" id="importDataFile" accept=".json" style="max-width:260px;">
+      </div>
+    </div>
+  `;
+}
+
+/* ============================================================
+   MODALS
+   ============================================================ */
+function openModal(html){
+  document.getElementById('modal-body').innerHTML = html;
+  document.getElementById('modal-backdrop').classList.add('active');
+}
+function closeModal(){ document.getElementById('modal-backdrop').classList.remove('active'); }
+
+function openChangePasswordModal(){
+  const actor = currentActor();
+  openModal(`
+    <h3>Change password</h3>
+    <span class="sub">The new password takes effect immediately.</span>
+    <form id="pwForm">
+      <div class="field"><label>Current password</label><div class="pw-wrap"><input type="password" id="pwCurrent" required><button type="button" class="pw-toggle" data-pw-toggle="pwCurrent" tabindex="-1">${EYE_ICON}</button></div></div>
+      <div class="field"><label>New password</label><div class="pw-wrap"><input type="password" id="pwNew" minlength="6" required><button type="button" class="pw-toggle" data-pw-toggle="pwNew" tabindex="-1">${EYE_ICON}</button></div></div>
+      <div class="field"><label>Confirm new password</label><div class="pw-wrap"><input type="password" id="pwNew2" minlength="6" required><button type="button" class="pw-toggle" data-pw-toggle="pwNew2" tabindex="-1">${EYE_ICON}</button></div></div>
+      <div id="pwErr" style="color:var(--bad); font-size:13px; display:none;"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="pwCancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  `);
+  document.getElementById('pwCancel').addEventListener('click', closeModal);
+  document.getElementById('pwForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const cur = document.getElementById('pwCurrent').value;
+    const n1 = document.getElementById('pwNew').value;
+    const n2 = document.getElementById('pwNew2').value;
+    const errEl = document.getElementById('pwErr');
+    const target = actor.type==='admin' ? actor.admin : actor.op;
+    const curHash = await sha256Hex(cur);
+    if(curHash !== target.passwordHash){ errEl.textContent='Current password is incorrect.'; errEl.style.display='block'; return; }
+    if(n1 !== n2){ errEl.textContent='Password confirmation does not match.'; errEl.style.display='block'; return; }
+    target.passwordHash = await sha256Hex(n1);
+    target.mustChange = false;
+    if(target.tempPasswordPlain) delete target.tempPasswordPlain;
+    persist();
+    closeModal();
+    toast('Password updated successfully.');
+  });
+}
+
+function openAddOperatorModal(){
+  openModal(`
+    <h3>Add operator</h3>
+    <span class="sub">An account will be generated with a temporary password.</span>
+    <form id="addOpForm">
+      <div class="field"><label>Operator code / name</label><input type="text" id="newCompany" placeholder="e.g. SUTERA JAYA" required></div>
+      <div class="field"><label>Email</label><input type="email" id="newEmail" placeholder="operator@example.com" required></div>
+      <div class="field"><label>Terminal</label>
+        <select id="newTerminal">
+          <option value="KT">Kuala Terengganu Bus Terminal</option>
+          <option value="MS">Melaka Sentral</option>
+        </select>
+      </div>
+      <div id="addOpErr" style="color:var(--bad); font-size:13px; display:none;"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="addOpCancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">Create account</button>
+      </div>
+    </form>
+  `);
+  document.getElementById('addOpCancel').addEventListener('click', closeModal);
+  document.getElementById('addOpForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const company = document.getElementById('newCompany').value.trim().toUpperCase();
+    const email = document.getElementById('newEmail').value.trim();
+    const terminal = document.getElementById('newTerminal').value;
+    const errEl = document.getElementById('addOpErr');
+    if(findOperatorByEmail(email)){ errEl.textContent='This email is already registered.'; errEl.style.display='block'; return; }
+    const id = terminal+'::'+company+'::'+Date.now();
+    const temp = tempPasswordFor(terminal, company+Date.now());
+    const op = { id, terminal, company, email, passwordHash: await sha256Hex(temp), tempPasswordPlain: temp, mustChange:true, active:true };
+    STATE.operators.push(op);
+    persist();
+    showCredentialModal(op);
+  });
+}
+function showCredentialModal(op){
+  openModal(`
+    <h3>Account created</h3>
+    <span class="sub">Share these credentials with ${esc(op.company)} through a secure channel (not a public one).</span>
+    <div class="credential-box">
+      <div><b>Login ID:</b> ${esc(op.email)}</div>
+      <div><b>Temporary password:</b> ${esc(op.tempPasswordPlain)}</div>
+      <div><b>Terminal:</b> ${TERMINALS[op.terminal].name}</div>
+    </div>
+    <div class="modal-actions"><button class="btn btn-primary" id="credOk">Done</button></div>
+  `);
+  document.getElementById('credOk').addEventListener('click', closeModal);
+}
+function openAddAdminModal(){
+  openModal(`
+    <h3>Add admin</h3>
+    <span class="sub">They will use this login ID and password to sign in as an administrator.</span>
+    <form id="addAdminForm">
+      <div class="field"><label>Full name</label><input type="text" id="newAdminName" placeholder="e.g. Nur Aisyah" required></div>
+      <div class="field"><label>Login ID</label><input type="text" id="newAdminId" placeholder="e.g. aisyah.admin" required></div>
+      <div class="field"><label>Email (optional)</label><input type="email" id="newAdminEmail" placeholder="aisyah@example.com"></div>
+      <div class="field"><label>Password</label><div class="pw-wrap"><input type="password" id="newAdminPw" minlength="6" required><button type="button" class="pw-toggle" data-pw-toggle="newAdminPw" tabindex="-1">${EYE_ICON}</button></div></div>
+      <div class="field"><label>Confirm password</label><div class="pw-wrap"><input type="password" id="newAdminPw2" minlength="6" required><button type="button" class="pw-toggle" data-pw-toggle="newAdminPw2" tabindex="-1">${EYE_ICON}</button></div></div>
+      <div id="addAdminErr" style="color:var(--bad); font-size:13px; display:none;"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="addAdminCancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">Create admin</button>
+      </div>
+    </form>
+  `);
+  document.getElementById('addAdminCancel').addEventListener('click', closeModal);
+  document.getElementById('addAdminForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const name = document.getElementById('newAdminName').value.trim();
+    const id = document.getElementById('newAdminId').value.trim();
+    const email = document.getElementById('newAdminEmail').value.trim() || null;
+    const pw = document.getElementById('newAdminPw').value;
+    const pw2 = document.getElementById('newAdminPw2').value;
+    const errEl = document.getElementById('addAdminErr');
+    if(!id){ errEl.textContent='Login ID is required.'; errEl.style.display='block'; return; }
+    if(findAdminByLoginId(id) || (email && findAdminByLoginId(email))){ errEl.textContent='This login ID or email is already in use.'; errEl.style.display='block'; return; }
+    if(pw !== pw2){ errEl.textContent='Password confirmation does not match.'; errEl.style.display='block'; return; }
+    STATE.admins.push({ id, name, email, passwordHash: await sha256Hex(pw), mustChange:false, active:true });
+    persist();
+    closeModal();
+    renderMain();
+    toast(`Admin account created for ${name}.`);
+  });
+}
+
+/* ============================================================
+   EXPORT — CSV / Excel (admin bulk data), with clipboard
+   fallback when the downloads capability is absent.
+   ============================================================ */
+function rowsToCsv(rows, showCompany, showTerminal){
+  const header = ['Date', ...(showTerminal?['Terminal']:[]), ...(showCompany?['Operator']:[]), 'Sales','Terminal/Pickup Charges','Manual Charges','Undersales','Net Payout'];
+  const lines = [header.join(',')];
+  for(const r of rows){
+    const cells = [r[1], ...(showTerminal?[r[7]||'']:[]), ...(showCompany?[r[0]]:[]), r[2], r[3], r[4], r[5], r[6]];
+    lines.push(cells.join(','));
+  }
+  return lines.join('\n');
+}
+function rowsToExcelHtml(rows, showCompany, showTerminal, title){
+  const header = ['Date', ...(showTerminal?['Terminal']:[]), ...(showCompany?['Operator']:[]), 'Sales','Terminal/Pickup Charges','Manual Charges','Undersales','Net Payout'];
+  const totals = sumRows(rows);
+  const rowsHtml = rows.map(r=>{
+    const bg = showTerminal ? (r[7]==='KT' ? '#ddf4ff' : '#fbefff') : '#ffffff';
+    return `<tr style="background:${bg};">
+      <td>${r[1]}</td>
+      ${showTerminal?`<td><b>${r[7]||''}</b></td>`:''}
+      ${showCompany?`<td>${esc(r[0])}</td>`:''}
+      <td align="right">${r[2].toFixed(2)}</td>
+      <td align="right">${r[3].toFixed(2)}</td>
+      <td align="right">${r[4].toFixed(2)}</td>
+      <td align="right">${r[5].toFixed(2)}</td>
+      <td align="right"><b>${r[6].toFixed(2)}</b></td>
+    </tr>`;
+  }).join('');
+  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+  <head><meta charset="UTF-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
+  <x:Name>${esc(title)}</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
+  </x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+  <style>
+    table{border-collapse:collapse; font-family:Calibri, Arial, sans-serif; font-size:12px;}
+    th{background:#0969da; color:#ffffff; padding:6px 10px; border:1px solid #b0b8c1; text-align:center;}
+    td{padding:5px 10px; border:1px solid #d0d7de;}
+  </style></head>
+  <body>
+  <table>
+    <tr><th colspan="${header.length}" style="font-size:14px;">${esc(title)}</th></tr>
+    <tr>${header.map(h=>`<th>${esc(h)}</th>`).join('')}</tr>
+    ${rowsHtml}
+    <tr style="background:#eaeef2; font-weight:bold;">
+      <td colspan="${1+(showTerminal?1:0)+(showCompany?1:0)}">TOTAL</td>
+      <td align="right">${totals.sales.toFixed(2)}</td>
+      <td align="right">${totals.stdCharge.toFixed(2)}</td>
+      <td align="right">${totals.manualCharge.toFixed(2)}</td>
+      <td align="right">${totals.undersales.toFixed(2)}</td>
+      <td align="right">${totals.final.toFixed(2)}</td>
+    </tr>
+  </table>
+  </body></html>`;
+}
+async function saveViaDownloads(data, filename){
+  try{
+    if(typeof claude === 'undefined' || !claude.use) throw new Error('no-runtime');
+    const downloads = await claude.use('downloads');
+    if(!downloads) throw new Error('not-granted');
+    await downloads.save({ filename, data });
+    toast('Downloading ' + filename + '…');
+    return;
+  }catch(e){ /* fall through to clipboard fallback below */ }
+  try{
+    await navigator.clipboard.writeText(data);
+    toast('Download is not available in this preview — the file contents were copied to your clipboard instead.');
+  }catch(e2){
+    toast('Download is not available in this preview.');
+  }
+}
+async function exportCsv(rows, showCompany, showTerminal, filename){ await saveViaDownloads(rowsToCsv(rows, showCompany, showTerminal), filename); }
+async function exportExcel(rows, showCompany, showTerminal, filename, title){ await saveViaDownloads(rowsToExcelHtml(rows, showCompany, showTerminal, title), filename); }
+
+/* ============================================================
+   MAIN RENDER + WIRING
+   ============================================================ */
+function renderMain(){
+  const main = document.getElementById('main');
+  const actor = currentActor();
+  if(!actor){ logout(); return; }
+
+  let html = '';
+  let effectiveOp = null;
+
+  if(actor.type === 'operator' || (actor.type==='admin' && VIEW.viewingAsOperatorId)){
+    effectiveOp = actor.type==='operator' ? actor.op : findOperatorById(VIEW.viewingAsOperatorId);
+    if(VIEW.route === 'ledger') html = operatorLedgerHtml(effectiveOp);
+    else html = operatorDashboardHtml(effectiveOp);
+  } else {
+    if(VIEW.route === 'directory') html = adminDirectoryHtml();
+    else if(VIEW.route === 'ledger') html = adminLedgerHtml();
+    else if(VIEW.route === 'entry') html = adminEntryHtml();
+    else if(VIEW.route === 'reconcile') html = adminReconcileHtml();
+    else if(VIEW.route === 'admins') html = adminUsersHtml();
+    else html = adminOverviewHtml();
+  }
+
+  main.innerHTML = html;
+  if(VIEW.route === 'entry' && document.getElementById('importPreviewWrap')){
+    document.getElementById('importPreviewWrap').innerHTML = importPreviewHtml();
+  }
+  fadeInMain();
+  wireMain(actor, effectiveOp);
+  animateKpis();
+}
+
+function wireMain(actor, effectiveOp){
+  const isOperatorView = !!effectiveOp;
+  const onRangeChange = ()=> renderMain();
+
+  wireRangeControls(onRangeChange);
+
+  const sel = document.getElementById('adminTerminalSel');
+  if(sel) sel.addEventListener('change', ()=>{ VIEW.adminTerminal = sel.value; renderMain(); });
+
+  const sortBtn = document.getElementById('btn-sort');
+  if(sortBtn) sortBtn.addEventListener('click', ()=>{ VIEW.sortDir = VIEW.sortDir==='desc'?'asc':'desc'; renderMain(); });
+
+  function currentScopeRows(){
+    if(isOperatorView){
+      const r = rangeForTerminal(effectiveOp.terminal);
+      return { rows: rowsFor(effectiveOp.terminal, effectiveOp.company).filter(row=>inRange(row[1], r.from, r.to)).map(row=>[...row.slice(0,7), effectiveOp.terminal]),
+                showCompany:false, showTerminal:false, name:`settlement-${effectiveOp.company}`, title:`Settlement — ${effectiveOp.company}` };
+    }
+    const terms = terminalsInScope();
+    let rows = [];
+    for(const t of terms){ const r = rangeForTerminal(t); rows = rows.concat(rowsForTerminal(t).filter(row=>inRange(row[1], r.from, r.to)).map(row=>[...row.slice(0,7), t])); }
+    if(VIEW.ledgerSearch){ const q = VIEW.ledgerSearch.toLowerCase(); rows = rows.filter(r=>r[0].toLowerCase().includes(q)); }
+    return { rows, showCompany:true, showTerminal:true, name:`settlement-${terms.join('-')}`, title:`Settlement — ${terms.join(' + ')}` };
+  }
+  const exportCsvBtn = document.getElementById('btn-export-csv');
+  if(exportCsvBtn) exportCsvBtn.addEventListener('click', ()=>{ const d = currentScopeRows(); exportCsv(d.rows, d.showCompany, d.showTerminal, `${d.name}.csv`); });
+  const exportXlsBtn = document.getElementById('btn-export-xls');
+  if(exportXlsBtn) exportXlsBtn.addEventListener('click', ()=>{ const d = currentScopeRows(); exportExcel(d.rows, d.showCompany, d.showTerminal, `${d.name}.xls`, d.title); });
+
+  const genStatementBtn = document.getElementById('btn-gen-statement');
+  if(genStatementBtn) genStatementBtn.addEventListener('click', ()=> generateStatementFor(effectiveOp.terminal, effectiveOp));
+  const terminalStmtBtn = document.getElementById('btn-terminal-statement');
+  if(terminalStmtBtn) terminalStmtBtn.addEventListener('click', openGenerateTerminalStatementModal);
+
+  const bulkPre = document.getElementById('btn-bulk-prefinalize');
+  const bulkFin = document.getElementById('btn-bulk-finalize');
+  function bulkSetStatus(status){
+    const d = currentScopeRows();
+    for(const r of d.rows) setEntryStatus(r[7], r[0], r[1], status);
+    renderMain();
+    toast(`${d.rows.length} row(s) marked ${STATUS_LABEL[status]}.`);
+  }
+  if(bulkPre) bulkPre.addEventListener('click', ()=> bulkSetStatus('prefinalized'));
+  if(bulkFin) bulkFin.addEventListener('click', ()=> bulkSetStatus('finalized'));
+
+  if(isOperatorView){
+    const chartCanvas = document.getElementById('opChart');
+    if(chartCanvas){
+      const r = rangeForTerminal(effectiveOp.terminal);
+      const rows = rowsFor(effectiveOp.terminal, effectiveOp.company).filter(row=>inRange(row[1], r.from, r.to));
+      const color = getCss(effectiveOp.terminal==='KT'?'--kt':'--ms');
+      drawAreaChart(chartCanvas, [{label:effectiveOp.company, color, points: rows.map(row=>({d:row[1], v:row[6]}))}], { tipEl: document.getElementById('chart-tip') });
+    }
+  } else if(VIEW.route !== 'directory' && VIEW.route !== 'ledger' && VIEW.route !== 'entry' && VIEW.route !== 'admins' && VIEW.route !== 'reconcile'){
+    const adminChart = document.getElementById('adminChart');
+    const leaderChart = document.getElementById('leaderChart');
+    if(adminChart){
+      const terms = terminalsInScope();
+      const series = terms.map(t=>{
+        const r = rangeForTerminal(t);
+        const trows = rowsForTerminal(t).filter(row=>inRange(row[1], r.from, r.to));
+        const byDate = new Map();
+        for(const row of trows){ byDate.set(row[1], (byDate.get(row[1])||0) + row[6]); }
+        const points = Array.from(byDate.entries()).sort((a,b)=>a[0]<b[0]?-1:1).map(([d,v])=>({d,v}));
+        return { label: TERMINALS[t].short, color: getCss(t==='KT'?'--kt':'--ms'), points };
+      });
+      drawAreaChart(adminChart, series, { tipEl: document.getElementById('chart-tip') });
+    }
+    if(leaderChart){
+      const terms = terminalsInScope();
+      let rows = [];
+      for(const t of terms){ const r = rangeForTerminal(t); rows = rows.concat(rowsForTerminal(t).filter(row=>inRange(row[1], r.from, r.to)).map(row=>[...row.slice(0,7), t])); }
+      const byOp = new Map();
+      for(const row of rows){ const key = row[7]+'::'+row[0]; const cur = byOp.get(key) || {v:0, t:row[7], label:row[0]}; cur.v += row[6]; byOp.set(key, cur); }
+      const bars = Array.from(byOp.values()).map(o=>({label:o.label,v:o.v,color:getCss(o.t==='KT'?'--kt':'--ms')})).sort((a,b)=>b.v-a.v).slice(0,8);
+      drawBarChart(leaderChart, bars);
+    }
+  }
+
+  document.querySelectorAll('#main tbody tr[data-company]').forEach(tr=>{
+    tr.addEventListener('click', ()=> openRowDetailModal(tr.dataset.terminal, tr.dataset.company, tr.dataset.date));
+  });
+
+  const dirSearch = document.getElementById('dirSearch');
+  if(dirSearch) dirSearch.addEventListener('input', ()=>{ VIEW.dirSearch = dirSearch.value; renderMain(); const el2=document.getElementById('dirSearch'); el2.focus(); el2.setSelectionRange(el2.value.length, el2.value.length); });
+  const dirTerminal = document.getElementById('dirTerminal');
+  if(dirTerminal) dirTerminal.addEventListener('change', ()=>{ VIEW.dirTerminal = dirTerminal.value; renderMain(); });
+  const addBtn = document.getElementById('btn-add-operator');
+  if(addBtn) addBtn.addEventListener('click', openAddOperatorModal);
+  const addAdminBtn = document.getElementById('btn-add-admin');
+  if(addAdminBtn) addAdminBtn.addEventListener('click', openAddAdminModal);
+
+  const exportDataBtn = document.getElementById('btn-export-data');
+  if(exportDataBtn) exportDataBtn.addEventListener('click', async ()=>{
+    const json = JSON.stringify(STATE, null, 2);
+    const today = new Date().toISOString().slice(0,10);
+    await saveViaDownloads(json, `gostatement-backup-${today}.json`);
+  });
+  const importDataFile = document.getElementById('importDataFile');
+  if(importDataFile) importDataFile.addEventListener('change', (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      let parsed;
+      try{ parsed = JSON.parse(reader.result); }
+      catch(err){ toast('That file is not valid JSON.'); return; }
+      if(!parsed || !Array.isArray(parsed.operators) || !Array.isArray(parsed.admins) || typeof parsed.entries !== 'object'){
+        toast('That does not look like a GoStatement backup file.');
+        return;
+      }
+      openModal(`
+        <h3>Import data snapshot</h3>
+        <span class="sub">This will REPLACE all current operators, admins, and entries in this browser with the contents of the file (${parsed.operators.length} operators, ${parsed.admins.length} admin(s)). This cannot be undone.</span>
+        <div class="modal-actions">
+          <button class="btn" id="importCancel">Cancel</button>
+          <button class="btn btn-danger" id="importConfirm">Replace data</button>
+        </div>
+      `);
+      document.getElementById('importCancel').addEventListener('click', closeModal);
+      document.getElementById('importConfirm').addEventListener('click', ()=>{
+        STATE = parsed;
+        persist();
+        closeModal();
+        toast('Data imported. Reloading…');
+        setTimeout(()=> location.reload(), 900);
+      });
+    };
+    reader.readAsText(file);
+  });
+
+  const ledgerSearch = document.getElementById('ledgerSearch');
+  if(ledgerSearch) ledgerSearch.addEventListener('input', ()=>{ VIEW.ledgerSearch = ledgerSearch.value; renderMain(); const el2=document.getElementById('ledgerSearch'); el2.focus(); el2.setSelectionRange(el2.value.length, el2.value.length); });
+
+  const reconcileSearch = document.getElementById('reconcileSearch');
+  if(reconcileSearch) reconcileSearch.addEventListener('input', ()=>{ VIEW.reconcileSearch = reconcileSearch.value; renderMain(); const el2=document.getElementById('reconcileSearch'); el2.focus(); el2.setSelectionRange(el2.value.length, el2.value.length); });
+  document.querySelectorAll('[data-recon-view]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const [terminal, company, date] = btn.getAttribute('data-recon-view').split('|');
+      openRowDetailModal(terminal, company, date);
+    });
+  });
+  document.querySelectorAll('[data-recon-fix]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const [terminal, company, date] = btn.getAttribute('data-recon-fix').split('|');
+      const op = STATE.operators.find(o=>o.terminal===terminal && o.company===company);
+      if(!op) return;
+      VIEW.entryForm = { terminal, operatorId: op.id, date };
+      VIEW.route = 'entry';
+      renderShell();
+    });
+  });
+
+  document.querySelectorAll('[data-act]').forEach(btn=>{
+    btn.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      const id = btn.getAttribute('data-id');
+      const act = btn.getAttribute('data-act');
+      const op = findOperatorById(id);
+      if(act === 'view'){ VIEW.viewingAsOperatorId = id; VIEW.route='dashboard'; renderShell(); }
+      if(act === 'statement'){ openGenerateStatementModal(op); }
+      if(act === 'toggle'){ op.active = !op.active; persist(); renderMain(); toast(op.active?'Operator activated.':'Operator deactivated.'); }
+      if(act === 'reset'){
+        const temp = tempPasswordFor(op.terminal, op.company+Date.now());
+        sha256Hex(temp).then(h=>{ op.passwordHash = h; op.tempPasswordPlain = temp; op.mustChange = true; persist(); showCredentialModal(op); });
+      }
+    });
+  });
+  document.querySelectorAll('[data-admin-act]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.getAttribute('data-admin-id');
+      const a = findAdminById(id);
+      if(!a) return;
+      const activeCount = STATE.admins.filter(x=>x.active!==false).length;
+      if(a.active!==false && activeCount<=1){ toast('At least one active admin is required.'); return; }
+      a.active = a.active===false ? true : false;
+      persist(); renderMain();
+      toast(a.active!==false ? 'Admin activated.' : 'Admin deactivated.');
+    });
+  });
+
+  /* ---- Daily Entry: manual form ---- */
+  const entryTerminalSel = document.getElementById('entryTerminal');
+  if(entryTerminalSel) entryTerminalSel.addEventListener('change', ()=>{ VIEW.entryForm.terminal = entryTerminalSel.value; VIEW.entryForm.operatorId = null; IMPORT_PREVIEW=null; renderMain(); });
+  const entryOperatorSel = document.getElementById('entryOperator');
+  if(entryOperatorSel) entryOperatorSel.addEventListener('change', ()=>{ VIEW.entryForm.operatorId = entryOperatorSel.value; renderMain(); });
+  const entryDateInput = document.getElementById('entryDate');
+  if(entryDateInput) entryDateInput.addEventListener('change', ()=>{ VIEW.entryForm.date = entryDateInput.value; renderMain(); });
+  function adjustmentsSum(){ return DRAFT_ADJUSTMENTS.reduce((s,a)=>s+(Number(a.amount)||0),0); }
+  const autoCalcBtn = document.getElementById('entryAutoCalc');
+  if(autoCalcBtn) autoCalcBtn.addEventListener('click', ()=>{
+    const sales = parseFloat(document.getElementById('entrySales').value)||0;
+    const std = parseFloat(document.getElementById('entryStdCharge').value)||0;
+    const manual = parseFloat(document.getElementById('entryManualCharge').value)||0;
+    const under = parseFloat(document.getElementById('entryUndersales').value)||0;
+    document.getElementById('entryFinal').value = (sales - std - manual + under + adjustmentsSum()).toFixed(2);
+  });
+  document.querySelectorAll('.adj-label').forEach(inp=>{
+    inp.addEventListener('input', ()=>{ DRAFT_ADJUSTMENTS[+inp.dataset.idx].label = inp.value; });
+  });
+  document.querySelectorAll('.adj-amount').forEach(inp=>{
+    inp.addEventListener('input', ()=>{ DRAFT_ADJUSTMENTS[+inp.dataset.idx].amount = parseFloat(inp.value)||0; });
+  });
+  document.querySelectorAll('[data-remove-adj]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ DRAFT_ADJUSTMENTS.splice(+btn.getAttribute('data-remove-adj'),1); renderMain(); });
+  });
+  const btnAddAdjustment = document.getElementById('btnAddAdjustment');
+  if(btnAddAdjustment) btnAddAdjustment.addEventListener('click', ()=>{ DRAFT_ADJUSTMENTS.push({label:'', amount:0}); renderMain(); });
+  const entryNoteEl = document.getElementById('entryNote');
+  if(entryNoteEl) entryNoteEl.addEventListener('input', ()=>{ DRAFT_NOTE = entryNoteEl.value; });
+  const entryDeleteBtn = document.getElementById('entryDelete');
+  if(entryDeleteBtn) entryDeleteBtn.addEventListener('click', ()=>{
+    const op = findOperatorById(VIEW.entryForm.operatorId);
+    if(!op) return;
+    delete STATE.entries[entryKey(VIEW.entryForm.terminal, op.company, VIEW.entryForm.date)];
+    DRAFT_KEY = null;
+    persist(); renderMain(); toast('Reverted to original settlement data.');
+  });
+  const entryForm = document.getElementById('entryForm');
+  if(entryForm) entryForm.addEventListener('submit', (e)=>{
+    e.preventDefault();
+    const op = findOperatorById(VIEW.entryForm.operatorId);
+    if(!op){ toast('Select an operator first.'); return; }
+    const date = document.getElementById('entryDate').value;
+    if(!date){ toast('Pick a date first.'); return; }
+    const sales = parseFloat(document.getElementById('entrySales').value)||0;
+    const std = -Math.abs(parseFloat(document.getElementById('entryStdCharge').value)||0);
+    const manual = -Math.abs(parseFloat(document.getElementById('entryManualCharge').value)||0);
+    const under = parseFloat(document.getElementById('entryUndersales').value)||0;
+    let final = document.getElementById('entryFinal').value;
+    final = final === '' ? (sales + std + manual + under + adjustmentsSum()) : parseFloat(final);
+    const status = document.getElementById('entryStatus').value;
+    const adjustments = DRAFT_ADJUSTMENTS.filter(a=>a.label.trim() || a.amount);
+    const note = DRAFT_NOTE.trim();
+    STATE.entries[entryKey(VIEW.entryForm.terminal, op.company, date)] = { sales, stdCharge:std, manualCharge:manual, undersales:under, final, status, adjustments, note, updatedAt: date };
+    VIEW.entryForm.date = date;
+    DRAFT_KEY = null;
+    persist(); renderMain();
+    toast(`Saved settlement for ${op.company} on ${fmtDate(date)}.`);
+  });
+
+  /* ---- Daily Entry: Excel import ---- */
+  const importFile = document.getElementById('importFile');
+  if(importFile) importFile.addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const statusEl = document.getElementById('importStatus');
+    statusEl.textContent = 'Reading ' + file.name + '…';
+    try{
+      const buf = await file.arrayBuffer();
+      const result = await parseSettlementWorkbook(buf);
+      if(!result.terminal) result.terminal = VIEW.entryForm.terminal;
+      IMPORT_PREVIEW = result;
+      statusEl.textContent = '';
+      renderMain();
+    }catch(err){
+      statusEl.textContent = 'Could not read this file — ' + err.message;
+      IMPORT_PREVIEW = null;
+    }
+  });
+  const importTerminalSel = document.getElementById('importTerminalSel');
+  if(importTerminalSel) importTerminalSel.addEventListener('change', ()=>{ IMPORT_PREVIEW.terminal = importTerminalSel.value; renderMain(); });
+  const btnCancelImport = document.getElementById('btnCancelImport');
+  if(btnCancelImport) btnCancelImport.addEventListener('click', ()=>{ IMPORT_PREVIEW = null; renderMain(); });
+  const btnConfirmImport = document.getElementById('btnConfirmImport');
+  if(btnConfirmImport) btnConfirmImport.addEventListener('click', async ()=>{
+    const terminal = document.getElementById('importTerminalSel').value;
+    const importStatus = document.getElementById('importStatusSel').value;
+    let created = 0;
+    for(const rec of IMPORT_PREVIEW.records){
+      let op = STATE.operators.find(o=>o.terminal===terminal && o.company===rec.company);
+      if(!op){
+        const temp = tempPasswordFor(terminal, rec.company+Date.now()+Math.random());
+        op = {
+          id: terminal+'::'+rec.company+'::'+Date.now()+Math.floor(Math.random()*1000),
+          terminal, company: rec.company,
+          email: rec.email || (rec.company.toLowerCase().replace(/[^a-z0-9]/g,'')+'@pending.example.com'),
+          passwordHash: await sha256Hex(temp), tempPasswordPlain: temp, mustChange:true, active:true
+        };
+        STATE.operators.push(op);
+        created++;
+      }
+      STATE.entries[entryKey(terminal, rec.company, rec.date)] = {
+        sales: rec.sales, stdCharge: rec.stdCharge, manualCharge: rec.manualCharge, undersales: rec.undersales,
+        final: rec.final, items: rec.items, status: importStatus, updatedAt: rec.date
+      };
+    }
+    const count = IMPORT_PREVIEW.records.length;
+    persist();
+    IMPORT_PREVIEW = null;
+    VIEW.entryForm.terminal = terminal;
+    renderMain();
+    toast(`Imported ${count} settlement row(s)${created ? ` · ${created} new operator account(s) created` : ''}.`);
+  });
+}
+
+/* ============================================================
+   BOOT
+   ============================================================ */
+document.getElementById('loginForm').addEventListener('submit', handleLogin);
+document.getElementById('btn-logout').addEventListener('click', logout);
+document.getElementById('btn-change-pw').addEventListener('click', openChangePasswordModal);
+document.getElementById('modal-backdrop').addEventListener('click', (e)=>{ if(e.target.id==='modal-backdrop') closeModal(); });
+document.querySelectorAll('.theme-toggle').forEach(btn=> btn.addEventListener('click', cycleTheme));
+
+let __resizeTimer;
+window.addEventListener('resize', ()=>{
+  clearTimeout(__resizeTimer);
+  __resizeTimer = setTimeout(()=>{ if(getSession() && document.getElementById('app').classList.contains('active')) renderMain(); }, 200);
+});
+
+(async function boot(){
+  applyTheme(currentThemeMode());
+  initPasswordToggle('loginPw');
+  await ensureSeed();
+  drawGateCanvas();
+  const s = getSession();
+  if(s && currentActor()){ enterApp(); }
+  else { showLogin(); }
+})();
+
+</script>
