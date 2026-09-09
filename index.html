@@ -703,6 +703,7 @@ const VIEW = {
   sortDir: 'desc',
   entryForm: { terminal:'KT', operatorId:null, date:null },
   manualInvoice: { terminal:'KT', period: new Date().toISOString().slice(0,7), operatorId:null, expandedId:null },
+  ledgerExpandedKey: null,
 };
 
 /* ============================================================
@@ -1474,6 +1475,57 @@ function openRowDetailModal(terminal, company, date){
   });
 }
 
+// Inline version of the row detail — used by the Settlement Ledger table so
+// the breakdown (and, for admins, the "+ Add" form) opens right under the
+// row instead of a popup, matching the Manual Invoice screen's pattern.
+function ledgerRowDetailInlineHtml(terminal, company, date){
+  const row = rowsFor(terminal, company).find(r=>r[1]===date);
+  if(!row) return '';
+  const { deductions, additions, hasItems, note } = rowDeductionsAdditions(terminal, company, date, row);
+  const status = getEntryStatus(terminal, company, date);
+  const recon = reconcileRow(terminal, company, date, row);
+  const actor = currentActor();
+  const isAdmin = actor && actor.type === 'admin';
+  const line = (it, color) => `
+    <div style="display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px solid var(--border); font-size:13px;">
+      <span style="color:var(--ink-soft);">${esc(it.label)}</span><span class="num" style="color:${color};">${it.amount<0?'−':'+'}${fmtAbs(it.amount)}</span>
+    </div>`;
+  return `
+    <div style="width:100%;">
+      <div style="display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; align-items:center;">
+        <b>${esc(company)} — ${fmtDate(date)}</b>
+        <span class="pill pill-${terminal.toLowerCase()}">${TERMINALS[terminal].name}</span>
+        <span class="pill ${STATUS_PILL[status]}">${STATUS_LABEL[status]}</span>
+        ${recon.mismatch ? `<span class="pill pill-bad">⚠ Mismatch</span>` : `<span class="pill pill-good">✓ Reconciled</span>`}
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px;">
+        <div>
+          <div class="eyebrow" style="color:var(--good); margin-bottom:4px;">Additions</div>
+          ${additions.length ? additions.map(a=>line(a,'var(--good)')).join('') : '<div style="font-size:12.5px; color:var(--ink-faint); padding:4px 0;">None</div>'}
+        </div>
+        <div>
+          <div class="eyebrow" style="color:var(--bad); margin-bottom:4px;">Deductions <span style="font-weight:400; color:var(--ink-faint);">(RFID, undersales, and any other charge subtracted from the sale)</span></div>
+          ${deductions.length ? deductions.map(d=>line(d,'var(--bad)')).join('') : '<div style="font-size:12.5px; color:var(--ink-faint); padding:4px 0;">None</div>'}
+        </div>
+      </div>
+      <div style="display:flex; justify-content:space-between; padding:10px 0 0; font-weight:700;"><span>Net payout (recorded)</span><span class="num">${fmtMoney(row[6])}</span></div>
+      ${recon.mismatch ? `<div style="display:flex; justify-content:space-between; padding:4px 0; font-weight:700; color:var(--bad);"><span>Expected from additions/deductions</span><span class="num">${fmtMoney(recon.expected)} (diff ${fmtMoney(recon.diff)})</span></div>` : ''}
+      ${!hasItems ? `<div style="color:var(--ink-faint); font-size:11.5px; margin-top:10px;">Full line-by-line itemization is shown for entries imported from an Excel file.</div>` : ''}
+      ${note ? `<div style="margin-top:14px; padding-top:10px; border-top:1px solid var(--border);"><div class="eyebrow" style="margin-bottom:4px;">Remarks</div><div style="font-size:13px; color:var(--ink-soft);">${esc(note)}</div></div>` : ''}
+      ${isAdmin ? `
+      <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--border);">
+        <div class="eyebrow" style="margin-bottom:8px;">+ Add a deduction or addition (e.g. RFID charge, extra pickup fee)</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <input type="text" id="ledgerAdjLabel" placeholder="Label — e.g. RFID Charge" style="flex:1.4; min-width:160px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--ink);">
+          <input type="number" step="0.01" id="ledgerAdjAmount" placeholder="Amount (+ addition / − deduction)" style="flex:1; min-width:140px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--ink);">
+          <button class="btn btn-sm btn-accent" id="ledgerAddBtn" data-terminal="${terminal}" data-company="${esc(company)}" data-date="${date}">Add</button>
+        </div>
+      </div>` : ''}
+      <div style="display:flex; justify-content:flex-end; margin-top:14px;"><button class="btn btn-sm" id="ledgerDetailClose">Close</button></div>
+    </div>
+  `;
+}
+
 /* ============================================================
    STATEMENT PDF — a genuine .pdf file built byte-by-byte, with no
    external library and no print-dialog step. This produces a real,
@@ -2019,6 +2071,7 @@ function operatorDashboardHtml(op){
       <div>
         <h1>Dashboard — ${esc(op.company)}</h1>
         <div class="desc"><span class="pill pill-${op.terminal.toLowerCase()}">${TERMINALS[op.terminal].name}</span> &middot; ${esc(op.email)}</div>
+        ${(op.companyName || op.companyAddress) ? `<div class="desc" style="margin-top:2px;">${op.companyName ? `<b>${esc(op.companyName)}</b>` : ''}${op.companyName && op.companyAddress ? ' — ' : ''}${esc(op.companyAddress||'')}</div>` : ''}
       </div>
       <div class="topbar-actions">${rangeControlHtml(op.terminal)}<button class="btn btn-accent btn-sm" id="btn-gen-statement">Download Statement (PDF)</button></div>
     </div>
@@ -2112,6 +2165,9 @@ function ledgerTableHtml(rows, opts){
             const status = getEntryStatus(term, r[0], r[1]);
             const recon = reconcileRow(term, r[0], r[1], r);
             const rowBg = recon.mismatch ? 'background:var(--bad-soft);' : '';
+            const key = term+'|'+r[0]+'|'+r[1];
+            const expanded = VIEW.ledgerExpandedKey === key;
+            const colspan = 7 + (showTerminal?1:0) + (showCompany?1:0);
             return `
             <tr class="${term ? 'row-'+term.toLowerCase() : ''}" data-terminal="${term}" data-company="${esc(r[0])}" data-date="${r[1]}" style="cursor:pointer; ${rowBg}" ${recon.mismatch ? `title="Mismatch: recorded ${fmtMoney(r[6])} vs expected ${fmtMoney(recon.expected)} (diff ${fmtMoney(recon.diff)})"` : ''}>
               <td>${recon.mismatch ? '⚠️ ' : ''}${fmtDate(r[1])}</td>
@@ -2123,7 +2179,8 @@ function ledgerTableHtml(rows, opts){
               <td class="num">${fmtMoney(r[5])}</td>
               <td class="num" style="font-weight:700; ${recon.mismatch?'color:var(--bad);':''}">${fmtMoney(r[6])}</td>
               <td><span class="pill ${STATUS_PILL[status]}">${STATUS_LABEL[status]}</span></td>
-            </tr>`;
+            </tr>
+            ${expanded ? `<tr><td colspan="${colspan}" style="background:var(--surface-2); padding:0; cursor:default;"><div style="padding:18px;">${ledgerRowDetailInlineHtml(term, r[0], r[1])}</div></td></tr>` : ''}`;
           }).join('')}
         </tbody>
         <tfoot><tr>
@@ -3054,7 +3111,33 @@ function wireMain(actor, effectiveOp){
   }
 
   document.querySelectorAll('#main tbody tr[data-company]').forEach(tr=>{
-    tr.addEventListener('click', ()=> openRowDetailModal(tr.dataset.terminal, tr.dataset.company, tr.dataset.date));
+    tr.addEventListener('click', ()=>{
+      const key = tr.dataset.terminal+'|'+tr.dataset.company+'|'+tr.dataset.date;
+      VIEW.ledgerExpandedKey = (VIEW.ledgerExpandedKey === key) ? null : key;
+      renderMain();
+    });
+  });
+  const ledgerDetailClose = document.getElementById('ledgerDetailClose');
+  if(ledgerDetailClose) ledgerDetailClose.addEventListener('click', (e)=>{ e.stopPropagation(); VIEW.ledgerExpandedKey = null; renderMain(); });
+  const ledgerAddBtn = document.getElementById('ledgerAddBtn');
+  if(ledgerAddBtn) ledgerAddBtn.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    const terminal = ledgerAddBtn.getAttribute('data-terminal');
+    const company = ledgerAddBtn.getAttribute('data-company');
+    const date = ledgerAddBtn.getAttribute('data-date');
+    const label = document.getElementById('ledgerAdjLabel').value.trim();
+    const amount = parseFloat(document.getElementById('ledgerAdjAmount').value);
+    if(!label || !amount){ toast('Enter a label and a non-zero amount.'); return; }
+    const rec = ensureEntryRecord(terminal, company, date);
+    if(!rec) return;
+    if(!rec.adjustments) rec.adjustments = [];
+    rec.adjustments.push({ label, amount });
+    rec.final = rec.sales + rec.stdCharge + rec.manualCharge + rec.undersales + rec.adjustments.reduce((s,a)=>s+(Number(a.amount)||0),0);
+    persist();
+    const op = STATE.operators.find(o=>o.terminal===terminal && o.company===company);
+    if(op) cloudPushEntry({ terminal, operatorId: op.id, date, sales:rec.sales, stdCharge:rec.stdCharge, manualCharge:rec.manualCharge, undersales:rec.undersales, final:rec.final, status: rec.status||'draft', adjustments: rec.adjustments, note: rec.note||'' });
+    toast('Added.');
+    renderMain();
   });
 
   const dirSearch = document.getElementById('dirSearch');
@@ -3502,9 +3585,10 @@ function manualInvoiceReadOnlyDetailHtml(inv, trips){
 
   const tripsHtml = trips.length ? `
     <div class="eyebrow" style="margin-bottom:6px;">Trip-by-trip breakdown (${trips.length})</div>
-    <div class="scrollx" style="max-height:340px; overflow-y:auto;">
-      <table>
-        <thead><tr><th>No</th><th style="text-align:left;">Date</th><th style="text-align:left;">Enter Time</th><th style="text-align:left;">Exit Time</th><th style="text-align:left;">Plate No</th><th style="text-align:left;">Destination</th></tr></thead>
+    <div style="max-height:340px; overflow-y:auto;">
+      <table style="width:100%; table-layout:fixed; border-collapse:collapse;">
+        <colgroup><col style="width:8%"><col style="width:14%"><col style="width:15%"><col style="width:15%"><col style="width:16%"><col style="width:32%"></colgroup>
+        <thead><tr><th>No</th><th style="text-align:left;">Date</th><th style="text-align:left;">Enter</th><th style="text-align:left;">Exit</th><th style="text-align:left;">Plate No</th><th style="text-align:left;">Destination</th></tr></thead>
         <tbody>
           ${trips.map((t,i)=>`
             <tr>
@@ -3513,7 +3597,7 @@ function manualInvoiceReadOnlyDetailHtml(inv, trips){
               <td style="text-align:left;">${esc(t.enter_time||'')}</td>
               <td style="text-align:left;">${esc(t.exit_time||'')}</td>
               <td style="text-align:left; font-weight:700;">${esc(t.plate_no||'')}</td>
-              <td style="text-align:left;">${esc(t.destination||'')}</td>
+              <td style="text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(t.destination||'')}">${esc(t.destination||'')}</td>
             </tr>`).join('')}
         </tbody>
       </table>
@@ -3532,34 +3616,33 @@ function manualInvoiceInlineFormHtml(inv){
   const qty = MANUAL_TRIPS_DRAFT.length || inv.quantity;
   const amount = +(qty*rate).toFixed(2);
   return `
-    <div style="max-width:960px;">
+    <div style="width:100%;">
       <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:12px; flex-wrap:wrap; gap:6px;">
         <div><b>${esc(inv.invoice_no)}</b> — ${esc(op?op.company:'')}</div>
         <span class="sub">Edit trip rows and invoice details directly here — no popup needed.</span>
       </div>
-      <div style="display:grid; grid-template-columns:1fr 160px; gap:12px; margin-bottom:4px;">
-        <div class="field"><label>Bill-to company name</label><input type="text" id="miInlineBillName" value="${esc(inv.bill_to_name||(op?op.company:''))}"></div>
-        <div class="field"><label>Rate (RM/trip)</label><input type="number" step="0.01" id="miInlineRate" value="${rate}"></div>
+      <div style="display:grid; grid-template-columns:1fr 140px; gap:12px; margin-bottom:4px;">
+        <div class="field"><label>Bill-to company name</label><input type="text" id="miInlineBillName" value="${esc(inv.bill_to_name||(op?op.company:''))}" style="width:100%; box-sizing:border-box;"></div>
+        <div class="field"><label>Rate (RM/trip)</label><input type="number" step="0.01" id="miInlineRate" value="${rate}" style="width:100%; box-sizing:border-box;"></div>
       </div>
-      <div class="field"><label>Bill-to address</label><textarea id="miInlineBillAddr" rows="2">${esc(inv.bill_to_address||'')}</textarea></div>
+      <div class="field"><label>Bill-to address</label><textarea id="miInlineBillAddr" rows="2" style="width:100%; box-sizing:border-box;">${esc(inv.bill_to_address||'')}</textarea></div>
       <div class="field">
         <label>Trip rows (${MANUAL_TRIPS_DRAFT.length}) — quantity is derived from these rows when present</label>
-        <div class="scrollx">
-          <table>
-            <thead><tr><th style="text-align:left;">Date</th><th style="text-align:left;">Enter Time</th><th style="text-align:left;">Exit Time</th><th style="text-align:left;">Plate No</th><th style="text-align:left;">Destination</th><th></th></tr></thead>
-            <tbody>
-              ${MANUAL_TRIPS_DRAFT.map((t,i)=>`
-                <tr>
-                  <td><input type="date" class="mi-inline-trip-date" data-idx="${i}" value="${t.tripDate||''}"></td>
-                  <td><input type="text" class="mi-inline-trip-enter" data-idx="${i}" value="${esc(t.enter||'')}" placeholder="09:15 AM"></td>
-                  <td><input type="text" class="mi-inline-trip-exit" data-idx="${i}" value="${esc(t.exit||'')}" placeholder="09:30 AM"></td>
-                  <td><input type="text" class="mi-inline-trip-plate" data-idx="${i}" value="${esc(t.plate||'')}" placeholder="Plate No"></td>
-                  <td><input type="text" class="mi-inline-trip-dest" data-idx="${i}" value="${esc(t.destination||'')}" placeholder="Destination"></td>
-                  <td><button type="button" class="btn btn-sm" data-remove-inline-trip="${i}">✕</button></td>
-                </tr>`).join('') || `<tr><td colspan="6" style="color:var(--ink-faint); font-size:12.5px; text-align:left;">No trip rows — quantity below will be used instead.</td></tr>`}
-            </tbody>
-          </table>
-        </div>
+        <table style="width:100%; table-layout:fixed; border-collapse:collapse;">
+          <colgroup><col style="width:15%"><col style="width:15%"><col style="width:15%"><col style="width:16%"><col style="width:31%"><col style="width:34px"></colgroup>
+          <thead><tr><th style="text-align:left; font-size:11px;">Date</th><th style="text-align:left; font-size:11px;">Enter</th><th style="text-align:left; font-size:11px;">Exit</th><th style="text-align:left; font-size:11px;">Plate No</th><th style="text-align:left; font-size:11px;">Destination</th><th></th></tr></thead>
+          <tbody>
+            ${MANUAL_TRIPS_DRAFT.map((t,i)=>`
+              <tr>
+                <td style="padding:2px 3px 2px 0;"><input type="date" class="mi-inline-trip-date" data-idx="${i}" value="${t.tripDate||''}" style="width:100%; box-sizing:border-box; padding:5px; font-size:12px;"></td>
+                <td style="padding:2px 3px;"><input type="text" class="mi-inline-trip-enter" data-idx="${i}" value="${esc(t.enter||'')}" placeholder="9:15 AM" style="width:100%; box-sizing:border-box; padding:5px; font-size:12px;"></td>
+                <td style="padding:2px 3px;"><input type="text" class="mi-inline-trip-exit" data-idx="${i}" value="${esc(t.exit||'')}" placeholder="9:30 AM" style="width:100%; box-sizing:border-box; padding:5px; font-size:12px;"></td>
+                <td style="padding:2px 3px;"><input type="text" class="mi-inline-trip-plate" data-idx="${i}" value="${esc(t.plate||'')}" placeholder="Plate" style="width:100%; box-sizing:border-box; padding:5px; font-size:12px;"></td>
+                <td style="padding:2px 3px;"><input type="text" class="mi-inline-trip-dest" data-idx="${i}" value="${esc(t.destination||'')}" placeholder="Destination" style="width:100%; box-sizing:border-box; padding:5px; font-size:12px;"></td>
+                <td style="padding:2px 0 2px 3px; text-align:center;"><button type="button" class="btn btn-sm" data-remove-inline-trip="${i}" style="padding:4px 7px;">✕</button></td>
+              </tr>`).join('') || `<tr><td colspan="6" style="color:var(--ink-faint); font-size:12.5px; text-align:left; padding:8px 0;">No trip rows — quantity below will be used instead.</td></tr>`}
+          </tbody>
+        </table>
         <button type="button" class="btn btn-sm" id="btnInlineAddTripRow" style="margin-top:6px;">+ Add trip row</button>
       </div>
       <div style="display:flex; gap:16px; align-items:flex-end; margin:12px 0; flex-wrap:wrap;">
