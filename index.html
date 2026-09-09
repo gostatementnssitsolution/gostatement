@@ -1108,9 +1108,91 @@ function drawGateCanvas(){
   window.addEventListener('resize', size);
 }
 
+// Public self-service claim screen: reached via ?claim=CODE. Lets an
+// operator set their OWN login email, password and company details using a
+// one-time code the admin gave them, instead of an admin typing everything.
+async function showClaimScreen(code){
+  document.getElementById('login-screen').style.display = 'grid';
+  document.getElementById('app').classList.remove('active');
+  const wrap = document.getElementById('login-form-wrap');
+  wrap.innerHTML = `<div id="login-form"><h2>Set up your account</h2><span class="sub">Checking your link…</span></div>`;
+  if(!window.GoStatementLive){
+    wrap.innerHTML = `<div id="login-form"><h2>Set up your account</h2><div id="login-error" style="display:block;">This app isn't connected to the cloud right now — try again shortly.</div></div>`;
+    return;
+  }
+  let info;
+  try{ info = await GoStatementLive.lookupClaim(code); }
+  catch(err){
+    wrap.innerHTML = `<div id="login-form"><h2>Set up your account</h2><div id="login-error" style="display:block;">${esc(err.message)}</div><div class="modal-actions" style="margin-top:12px;"><button class="btn" id="claimBackToLogin">Back to sign in</button></div></div>`;
+    document.getElementById('claimBackToLogin').addEventListener('click', ()=>{ history.replaceState(null,'',location.pathname); showLogin(); });
+    return;
+  }
+  wrap.innerHTML = `
+    <div id="login-form">
+      <h2>Set up your account</h2>
+      <span class="sub">${esc(info.company)} — choose your own sign-in email and password.</span>
+      <form id="claimForm" autocomplete="off">
+        <div id="claim-error" style="display:none;"></div>
+        <div class="field"><label>Sign-in email</label><input id="claimEmail" type="email" placeholder="you@example.com" required></div>
+        <div class="field"><label>Password (min 8 characters)</label><div class="pw-wrap"><input id="claimPw" type="password" minlength="8" required><button type="button" class="pw-toggle" data-pw-toggle="claimPw" tabindex="-1">${EYE_ICON}</button></div></div>
+        <div class="field"><label>Legal company name</label><input id="claimCompanyName" type="text" value="${esc(info.company_name || '')}" placeholder="e.g. SANI EXPRESS SDN BHD"></div>
+        <div class="field"><label>Billing address</label><textarea id="claimCompanyAddress" rows="3" placeholder="Full billing address">${esc(info.company_address || '')}</textarea></div>
+        <div class="field"><label>Additional email (optional)</label><input id="claimAltEmail" type="email" value="${esc(info.alt_email || '')}" placeholder="finance@example.com"></div>
+        <button type="submit" class="btn btn-primary" style="margin-top:4px;">Create my account</button>
+      </form>
+    </div>`;
+  initPasswordToggle('claimPw');
+  document.getElementById('claimForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const errEl = document.getElementById('claim-error');
+    errEl.style.display = 'none';
+    const email = document.getElementById('claimEmail').value.trim();
+    const password = document.getElementById('claimPw').value;
+    const companyName = document.getElementById('claimCompanyName').value.trim();
+    const companyAddress = document.getElementById('claimCompanyAddress').value.trim();
+    const altEmail = document.getElementById('claimAltEmail').value.trim();
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    submitBtn.disabled = true; submitBtn.textContent = 'Creating…';
+    try{
+      await GoStatementLive.claimAccount({ code, email, password, companyName, companyAddress, altEmail });
+      wrap.innerHTML = `<div id="login-form"><h2>You're all set!</h2><span class="sub">Your account is ready. Sign in with <b>${esc(email)}</b> and the password you just chose.</span><div class="modal-actions" style="margin-top:12px;"><button class="btn btn-primary" id="claimGoLogin">Go to sign in</button></div></div>`;
+      document.getElementById('claimGoLogin').addEventListener('click', ()=>{ history.replaceState(null,'',location.pathname); showLogin(); });
+    }catch(err){
+      errEl.textContent = err.message; errEl.style.display = 'block';
+      submitBtn.disabled = false; submitBtn.textContent = 'Create my account';
+    }
+  });
+}
+const LOGIN_FORM_HTML = `
+    <div id="login-form">
+      <h2>Sign in</h2>
+      <span class="sub">Enter your operator email/ID and password.</span>
+      <form id="loginForm" autocomplete="off">
+        <div id="login-error"></div>
+        <div class="field">
+          <label for="loginId">Email or operator ID</label>
+          <input id="loginId" type="text" placeholder="e.g. adamekspres@gmail.com" required>
+        </div>
+        <div class="field">
+          <label for="loginPw">Password</label>
+          <div class="pw-wrap">
+            <input id="loginPw" type="password" placeholder="Password" required>
+            <button type="button" class="pw-toggle" data-pw-toggle="loginPw" tabindex="-1"></button>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top:4px;">Sign in</button>
+      </form>
+    </div>`;
 function showLogin(){
   document.getElementById('login-screen').style.display = 'grid';
   document.getElementById('app').classList.remove('active');
+  const wrap = document.getElementById('login-form-wrap');
+  if(!document.getElementById('loginForm')){
+    // Restore the normal sign-in form if a claim screen replaced it.
+    wrap.innerHTML = LOGIN_FORM_HTML;
+    initPasswordToggle('loginPw');
+    document.getElementById('loginForm').addEventListener('submit', handleLogin);
+  }
   document.getElementById('loginId').value = '';
   document.getElementById('loginPw').value = '';
 }
@@ -2096,7 +2178,7 @@ function operatorDashboardHtml(op){
         <div class="desc"><span class="pill pill-${op.terminal.toLowerCase()}">${TERMINALS[op.terminal].name}</span> &middot; ${esc(op.email)}</div>
         ${(op.companyName || op.companyAddress) ? `<div class="desc" style="margin-top:2px;">${op.companyName ? `<b>${esc(op.companyName)}</b>` : ''}${op.companyName && op.companyAddress ? ' — ' : ''}${esc(op.companyAddress||'')}</div>` : ''}
       </div>
-      <div class="topbar-actions">${rangeControlHtml(op.terminal)}<button class="btn btn-accent btn-sm" id="btn-gen-statement">Download Statement (PDF)</button></div>
+      <div class="topbar-actions">${rangeControlHtml(op.terminal)}<button class="btn btn-sm" id="btn-my-company-info">Edit Company Info</button><button class="btn btn-accent btn-sm" id="btn-gen-statement">Download Statement (PDF)</button></div>
     </div>
 
     <div class="kpi-grid">
@@ -2375,6 +2457,7 @@ function adminDirectoryHtml(){
                     <button class="btn btn-sm" data-act="view" data-id="${o.id}">Dashboard</button>
                     <button class="btn btn-sm" data-act="statement" data-id="${o.id}">Statement</button>
                     <button class="btn btn-sm" data-act="editinfo" data-id="${o.id}">Company Info</button>
+                    <button class="btn btn-sm" data-act="selfsignup" data-id="${o.id}" title="Get a link so this operator can set their own login + details">Self Sign-up Link</button>
                     <button class="btn btn-sm" data-act="reset" data-id="${o.id}">Reset password</button>
                     <button class="btn btn-sm ${o.active?'btn-danger':''}" data-act="toggle" data-id="${o.id}">${o.active?'Deactivate':'Activate'}</button>
                   </div>
@@ -2842,6 +2925,43 @@ function openOperatorInfoModal(op){
   });
 }
 
+// Self-service version of Company Info, for an operator editing their OWN
+// record from their own Dashboard — no login-email field (that stays
+// admin/claim-link controlled), just the details that are genuinely theirs
+// to keep accurate: legal name, billing address, and an extra contact email.
+function openMyCompanyInfoModal(op){
+  openModal(`
+    <h3>Company Info</h3>
+    <span class="sub">Keep your legal name and address accurate — they're used as the "Bill To" on your invoices and statements.</span>
+    <form id="myOpInfoForm">
+      <div class="field"><label>Legal company name</label><input type="text" id="myOpiName" value="${esc(op.companyName || op.company)}" placeholder="e.g. SANI EXPRESS SDN BHD"></div>
+      <div class="field"><label>Billing address</label><textarea id="myOpiAddress" rows="3" placeholder="e.g. KOMPLEKS TERMINAL SANI EXPRESS, PERSIARAN KLANG SENTRAL 2, 41050 KLANG">${esc(op.companyAddress || '')}</textarea></div>
+      <div class="field"><label>Additional email (optional — e.g. accounts/finance CC)</label><input type="email" id="myOpiAltEmail" value="${esc(op.altEmail || '')}" placeholder="finance@example.com"></div>
+      <div id="myOpInfoErr" style="color:var(--bad); font-size:13px; display:none;"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="myOpiCancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  `);
+  document.getElementById('myOpiCancel').addEventListener('click', closeModal);
+  document.getElementById('myOpInfoForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const companyName = document.getElementById('myOpiName').value.trim();
+    const companyAddress = document.getElementById('myOpiAddress').value.trim();
+    const altEmail = document.getElementById('myOpiAltEmail').value.trim();
+    const errEl = document.getElementById('myOpInfoErr');
+    op.companyName = companyName; op.companyAddress = companyAddress; op.altEmail = altEmail;
+    persist();
+    if(window.GoStatementLive){
+      try{ await GoStatementLive.updateOperator(op.id, { company_name: companyName, company_address: companyAddress, alt_email: altEmail }); }
+      catch(err){ errEl.textContent = 'Saved locally — cloud sync failed: ' + err.message; errEl.style.display='block'; return; }
+    }
+    closeModal();
+    renderMain();
+    toast('Company info saved.');
+  });
+}
 function openAddOperatorModal(){
   openModal(`
     <h3>Add operator</h3>
@@ -3132,6 +3252,8 @@ function wireMain(actor, effectiveOp){
 
   const genStatementBtn = document.getElementById('btn-gen-statement');
   if(genStatementBtn) genStatementBtn.addEventListener('click', ()=> generateStatementFor(effectiveOp.terminal, effectiveOp));
+  const myCompanyInfoBtn = document.getElementById('btn-my-company-info');
+  if(myCompanyInfoBtn) myCompanyInfoBtn.addEventListener('click', ()=> openMyCompanyInfoModal(effectiveOp));
   const terminalStmtBtn = document.getElementById('btn-terminal-statement');
   if(terminalStmtBtn) terminalStmtBtn.addEventListener('click', openGenerateTerminalStatementModal);
 
@@ -3289,6 +3411,27 @@ function wireMain(actor, effectiveOp){
       if(act === 'view'){ VIEW.viewingAsOperatorId = id; VIEW.route='dashboard'; renderShell(); }
       if(act === 'statement'){ openGenerateStatementModal(op); }
       if(act === 'editinfo'){ openOperatorInfoModal(op); }
+      if(act === 'selfsignup'){
+        if(!window.GoStatementLive){ toast('Not connected to the cloud in this session — sign out and sign back in with the cloud admin email.'); return; }
+        btn.disabled = true;
+        GoStatementLive.generateClaimCode(op.id).then(code=>{
+          const link = `${location.origin}${location.pathname}?claim=${code}`;
+          openModal(`
+            <h3>Self Sign-up Link — ${esc(op.company)}</h3>
+            <span class="sub">Send this link to the operator. They'll set their own email, password, company name and address. The link works once.</span>
+            <div class="credential-box"><div style="word-break:break-all;">${esc(link)}</div></div>
+            <div class="modal-actions">
+              <button type="button" class="btn" id="ssCopy">Copy Link</button>
+              <button type="button" class="btn btn-primary" id="ssDone">Done</button>
+            </div>
+          `);
+          document.getElementById('ssDone').addEventListener('click', closeModal);
+          document.getElementById('ssCopy').addEventListener('click', ()=>{
+            navigator.clipboard.writeText(link).then(()=>toast('Link copied.')).catch(()=>toast('Could not copy — select and copy manually.'));
+          });
+        }).catch(err=>toast('Could not create link: ' + err.message))
+          .finally(()=>{ btn.disabled = false; });
+      }
       if(act === 'toggle'){ op.active = !op.active; persist(); renderMain(); toast(op.active?'Operator activated.':'Operator deactivated.'); }
       if(act === 'reset'){
         const cloudConnected = window.GoStatementLive && Object.keys(TERMINAL_IDS).length > 0;
@@ -4174,6 +4317,11 @@ window.addEventListener('resize', ()=>{
   initPasswordToggle('loginPw');
   await ensureSeed();
   drawGateCanvas();
+
+  // A self sign-up link (?claim=CODE) always wins — show that instead of the
+  // normal login/session flow, regardless of any existing session.
+  const claimCode = new URLSearchParams(location.search).get('claim');
+  if(claimCode){ await showClaimScreen(claimCode); return; }
 
   // Restore a real Supabase Auth session across page reloads.
   if(window.GoStatementLive){

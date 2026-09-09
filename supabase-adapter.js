@@ -115,6 +115,36 @@
     return data;
   }
 
+  // Admin generates a one-time claim code for an operator, so the operator
+  // can set up their OWN login + company details via a public link, instead
+  // of the admin typing everything in. Retries on the rare code collision.
+  async function generateClaimCode(operatorId) {
+    for (let i = 0; i < 5; i++) {
+      const code = Array.from(crypto.getRandomValues(new Uint8Array(6))).map(b => b.toString(36)).join("").slice(0, 8).toUpperCase();
+      const { error } = await db.from("operators").update({ claim_code: code }).eq("id", operatorId);
+      if (!error) return code;
+      if (i === 4) throw error;
+    }
+  }
+
+  // Public self-service claim flow (no session needed) — calls the
+  // operator-claim edge function directly. `lookupClaim` previews whose
+  // account this is; `claimAccount` actually creates the login.
+  async function lookupClaim(code) {
+    const { data, error } = await db.functions.invoke("operator-claim", { body: { action: "lookup", code } });
+    if (error) { let msg = error.message; try { const b = await error.context.json(); if (b?.error) msg = b.error; } catch (_) {} throw new Error(msg); }
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }
+  async function claimAccount({ code, email, password, companyName, companyAddress, altEmail }) {
+    const { data, error } = await db.functions.invoke("operator-claim", {
+      body: { action: "claim", code, email, password, company_name: companyName, company_address: companyAddress, alt_email: altEmail },
+    });
+    if (error) { let msg = error.message; try { const b = await error.context.json(); if (b?.error) msg = b.error; } catch (_) {} throw new Error(msg); }
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }
+
   // Creates a REAL Supabase Auth login for an operator (works from any
   // device, unlike the old local-only temp password) via a service-role
   // edge function, and links it to the operator's directory record.
@@ -361,6 +391,7 @@
     requestPasswordReset, completePasswordReset,
     // reference data
     loadTerminals, loadOperators, createOperator, updateOperator, provisionOperatorLogin,
+    generateClaimCode, lookupClaim, claimAccount,
     // admins
     listAdmins, inviteAdmin, setAdminActive,
     // entries
