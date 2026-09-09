@@ -631,8 +631,8 @@ async function cloudLoadAll(){
       const code = o.terminals ? o.terminals.code : null;
       if(!code) continue;
       const existing = STATE.operators.find(x => x.terminal === code && x.company === o.company);
-      if(existing){ existing.id = o.id; existing.email = o.email; existing.active = o.active !== false; existing.invoiceSeq = o.invoice_seq; existing.defaultTosRate = Number(o.default_tos_rate)||10; }
-      else STATE.operators.push({ id: o.id, terminal: code, company: o.company, email: o.email, passwordHash: null, mustChange:false, active: o.active !== false, invoiceSeq: o.invoice_seq, defaultTosRate: Number(o.default_tos_rate)||10 });
+      if(existing){ existing.id = o.id; existing.email = o.email; existing.active = o.active !== false; existing.invoiceSeq = o.invoice_seq; existing.defaultTosRate = Number(o.default_tos_rate)||10; existing.companyName = o.company_name||''; existing.companyAddress = o.company_address||''; }
+      else STATE.operators.push({ id: o.id, terminal: code, company: o.company, email: o.email, passwordHash: null, mustChange:false, active: o.active !== false, invoiceSeq: o.invoice_seq, defaultTosRate: Number(o.default_tos_rate)||10, companyName: o.company_name||'', companyAddress: o.company_address||'' });
     }
 
     const entries = await GoStatementLive.loadEntries();
@@ -984,7 +984,17 @@ async function parseManualTripWorkbook(arrayBuffer){
     if(!groups[key]) groups[key] = [];
     groups[key].push(trip);
   }
-  return { terminal: terminalGuess, groups };
+  // Auto-detect the reporting month/period straight from the trip dates
+  // themselves (most common YYYY-MM among all rows) rather than requiring
+  // the admin to pick a month first — matches whatever the sheet was for.
+  const monthCounts = {};
+  Object.values(groups).forEach(trips => trips.forEach(t=>{
+    const ym = t.dateIso.slice(0,7);
+    monthCounts[ym] = (monthCounts[ym]||0)+1;
+  }));
+  const ranked = Object.entries(monthCounts).sort((a,b)=>b[1]-a[1]);
+  const detectedPeriod = ranked.length ? ranked[0][0] : null;
+  return { terminal: terminalGuess, groups, detectedPeriod };
 }
 // Best-effort match of a trip-list "Operator Name" (a different naming
 // convention than our operator directory) to an existing operator company.
@@ -2217,6 +2227,7 @@ function adminDirectoryHtml(){
                   <div style="display:flex; gap:6px; justify-content:flex-end;">
                     <button class="btn btn-sm" data-act="view" data-id="${o.id}">Dashboard</button>
                     <button class="btn btn-sm" data-act="statement" data-id="${o.id}">Statement</button>
+                    <button class="btn btn-sm" data-act="editinfo" data-id="${o.id}">Company Info</button>
                     <button class="btn btn-sm" data-act="reset" data-id="${o.id}">Reset password</button>
                     <button class="btn btn-sm ${o.active?'btn-danger':''}" data-act="toggle" data-id="${o.id}">${o.active?'Deactivate':'Activate'}</button>
                   </div>
@@ -2639,6 +2650,40 @@ function openChangePasswordModal(){
   });
 }
 
+// Legal company name + billing address, stored on the operator record itself
+// (not just per-invoice) so Manual Invoice generation and Excel import both
+// default to it — editable here any time it changes.
+function openOperatorInfoModal(op){
+  openModal(`
+    <h3>Company Info — ${esc(op.company)}</h3>
+    <span class="sub">Used as the "Bill To" name and address on Manual Invoices and statements.</span>
+    <form id="opInfoForm">
+      <div class="field"><label>Legal company name</label><input type="text" id="opiName" value="${esc(op.companyName || op.company)}" placeholder="e.g. SANI EXPRESS SDN BHD"></div>
+      <div class="field"><label>Billing address</label><textarea id="opiAddress" rows="3" placeholder="e.g. KOMPLEKS TERMINAL SANI EXPRESS, PERSIARAN KLANG SENTRAL 2, 41050 KLANG">${esc(op.companyAddress || '')}</textarea></div>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="opiCancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  `);
+  document.getElementById('opiCancel').addEventListener('click', closeModal);
+  document.getElementById('opInfoForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const companyName = document.getElementById('opiName').value.trim();
+    const companyAddress = document.getElementById('opiAddress').value.trim();
+    op.companyName = companyName;
+    op.companyAddress = companyAddress;
+    persist();
+    if(window.GoStatementLive){
+      try{ await GoStatementLive.updateOperator(op.id, { company_name: companyName, company_address: companyAddress }); }
+      catch(err){ toast('Saved locally — cloud sync failed: ' + err.message); }
+    }
+    closeModal();
+    renderMain();
+    toast('Company info saved.');
+  });
+}
+
 function openAddOperatorModal(){
   openModal(`
     <h3>Add operator</h3>
@@ -3023,6 +3068,7 @@ function wireMain(actor, effectiveOp){
       const op = findOperatorById(id);
       if(act === 'view'){ VIEW.viewingAsOperatorId = id; VIEW.route='dashboard'; renderShell(); }
       if(act === 'statement'){ openGenerateStatementModal(op); }
+      if(act === 'editinfo'){ openOperatorInfoModal(op); }
       if(act === 'toggle'){ op.active = !op.active; persist(); renderMain(); toast(op.active?'Operator activated.':'Operator deactivated.'); }
       if(act === 'reset'){
         const temp = tempPasswordFor(op.terminal, op.company+Date.now());
@@ -3202,7 +3248,7 @@ function manualImportPreviewHtml(){
   return `
     <div class="card" style="margin-bottom:14px; padding:14px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-        <div><b>Import preview</b> — ${p.groups.length} operator group(s) found${p.terminalGuess?` (detected terminal: ${p.terminalGuess})`:''}</div>
+        <div><b>Import preview</b> — ${p.groups.length} operator group(s) found${p.terminalGuess?` · terminal: ${p.terminalGuess}`:''}${p.detectedPeriod?` · period: ${fmtDate(monthRange(p.detectedPeriod).from)} – ${fmtDate(monthRange(p.detectedPeriod).to)}`:''}</div>
         <button class="btn btn-sm" id="btn-mi-cancel-import">Cancel</button>
       </div>
       <div class="scrollx">
@@ -3377,8 +3423,8 @@ async function openManualInvoiceModal(existingInvoice){
             ${opsInTerminal.map(o=>`<option value="${o.id}" ${o.id===selectedOpId?'selected':''}>${esc(o.company)}</option>`).join('')}
           </select>
         </div>
-        <div class="field"><label>Bill-to company name</label><input type="text" id="miBillName" value="${esc(existingInvoice?(existingInvoice.bill_to_name||''):(op?op.company:''))}"></div>
-        <div class="field"><label>Bill-to address</label><textarea id="miBillAddr" rows="2">${esc(existingInvoice?(existingInvoice.bill_to_address||''):'')}</textarea></div>
+        <div class="field"><label>Bill-to company name</label><input type="text" id="miBillName" value="${esc(existingInvoice?(existingInvoice.bill_to_name||''):(op?(op.companyName||op.company):''))}"></div>
+        <div class="field"><label>Bill-to address</label><textarea id="miBillAddr" rows="2">${esc(existingInvoice?(existingInvoice.bill_to_address||''):(op?(op.companyAddress||''):''))}</textarea></div>
         <div class="field"><label>Rate (RM per trip)</label><input type="number" step="0.01" id="miRate" value="${rate}"></div>
         <div class="field">
           <label>Trip rows (${MANUAL_TRIPS_DRAFT.length}) — quantity is derived from these rows when present</label>
@@ -3489,13 +3535,18 @@ function wireManualInvoice(actor, effectiveOp){
     try{
       const buf = await file.arrayBuffer();
       const parsed = await parseManualTripWorkbook(buf);
+      // Read the month/terminal straight from the sheet — no need to pick it first.
+      if(parsed.terminal) VIEW.manualInvoice.terminal = parsed.terminal;
+      if(parsed.detectedPeriod) VIEW.manualInvoice.period = parsed.detectedPeriod;
+      MANUAL_INVOICES_LOADED_KEY = null;
       const opsInTerminal = STATE.operators.filter(o=>o.terminal===VIEW.manualInvoice.terminal && o.active!==false);
       const groups = Object.entries(parsed.groups).map(([name, trips])=>{
         const match = guessOperatorMatch(name, opsInTerminal);
         return { name, trips, matchedOperatorId: match ? match.id : null };
       });
-      MANUAL_IMPORT_PREVIEW = { terminalGuess: parsed.terminal, groups };
+      MANUAL_IMPORT_PREVIEW = { terminalGuess: parsed.terminal, detectedPeriod: parsed.detectedPeriod, groups };
       renderMain();
+      if(parsed.detectedPeriod) toast(`Detected period: ${fmtDate(monthRange(parsed.detectedPeriod).from)} – ${fmtDate(monthRange(parsed.detectedPeriod).to)}`);
     }catch(err){ toast('Import failed: ' + err.message); }
     uploadFile.value = '';
   });
@@ -3527,7 +3578,7 @@ function wireManualInvoice(actor, effectiveOp){
         const saved = await GoStatementLive.saveManualInvoice({
           terminalId, operatorId: op.id, invoiceNo, invoiceDate: to,
           periodFrom: from, periodTo: to, rate, quantity, amount, rounding:0, grandTotal: amount,
-          billToName: op.company, billToAddress: '', status:'draft'
+          billToName: op.companyName || op.company, billToAddress: op.companyAddress || '', status:'draft'
         });
         const trips = g.trips.map((t,idx)=>({ tripNo: t.no||idx+1, tripDate: t.dateIso, enter:t.enter, exit:t.exit, plate:t.plate, destination:t.destination }));
         await GoStatementLive.saveManualTripEntries(saved.id, trips);
