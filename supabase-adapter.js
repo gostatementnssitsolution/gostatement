@@ -115,6 +115,24 @@
     return data;
   }
 
+  // Creates a REAL Supabase Auth login for an operator (works from any
+  // device, unlike the old local-only temp password) via a service-role
+  // edge function, and links it to the operator's directory record.
+  // Returns { login_email, password } to show the admin once.
+  async function provisionOperatorLogin({ operatorId, company, terminalCode, email }) {
+    const { data, error } = await db.functions.invoke("create-operator-account", {
+      body: { operator_id: operatorId, company, terminal_code: terminalCode, email },
+    });
+    if (error) {
+      // Edge functions return non-2xx as a FunctionsHttpError — try to read the real message.
+      let msg = error.message || "Could not create login.";
+      try { const body = await error.context.json(); if (body && body.error) msg = body.error; } catch (_) {}
+      throw new Error(msg);
+    }
+    if (data && data.error) throw new Error(data.error);
+    return data; // { login_email, password }
+  }
+
   /* ---------------- Admins (multi-admin via profiles) ---------------- */
 
   async function listAdmins() {
@@ -342,7 +360,7 @@
     signIn, signOut, getSession, getMyProfile,
     requestPasswordReset, completePasswordReset,
     // reference data
-    loadTerminals, loadOperators, createOperator, updateOperator,
+    loadTerminals, loadOperators, createOperator, updateOperator, provisionOperatorLogin,
     // admins
     listAdmins, inviteAdmin, setAdminActive,
     // entries

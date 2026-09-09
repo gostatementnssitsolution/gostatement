@@ -2863,6 +2863,36 @@ function openAddOperatorModal(){
     const terminal = document.getElementById('newTerminal').value;
     const errEl = document.getElementById('addOpErr');
     if(findOperatorByEmail(email)){ errEl.textContent='This email is already registered.'; errEl.style.display='block'; return; }
+    errEl.style.display='none';
+
+    // Cloud path: create the directory record + a REAL Supabase Auth login
+    // together, so the operator can sign in from any device immediately —
+    // no more "reset password only works on the admin's own browser" bug.
+    if(window.GoStatementLive){
+      const submitBtn = e.target.querySelector('button[type="submit"]');
+      submitBtn.disabled = true; submitBtn.textContent = 'Creating…';
+      try{
+        const created = await GoStatementLive.createOperator({ terminalCode: terminal, company, email });
+        let cred;
+        try{
+          cred = await GoStatementLive.provisionOperatorLogin({ operatorId: created.id, company, terminalCode: terminal, email });
+        }catch(loginErr){
+          toast('Operator saved, but creating the login failed: ' + loginErr.message + ' — you can retry from the operator\'s Company Info screen.');
+          await cloudLoadAll(); closeModal(); renderMain();
+          return;
+        }
+        await cloudLoadAll();
+        renderMain();
+        showCredentialModal({ company, email: cred.login_email, tempPasswordPlain: cred.password, terminal, cloud:true });
+      }catch(err){
+        errEl.textContent = 'Could not create operator: ' + err.message;
+        errEl.style.display = 'block';
+        submitBtn.disabled = false; submitBtn.textContent = 'Create account';
+      }
+      return;
+    }
+
+    // Legacy local-only fallback (no Supabase connection available).
     const id = terminal+'::'+company+'::'+Date.now();
     const temp = tempPasswordFor(terminal, company+Date.now());
     const op = { id, terminal, company, email, passwordHash: await sha256Hex(temp), tempPasswordPlain: temp, mustChange:true, active:true };
@@ -2874,7 +2904,7 @@ function openAddOperatorModal(){
 function showCredentialModal(op){
   openModal(`
     <h3>Account created</h3>
-    <span class="sub">Share these credentials with ${esc(op.company)} through a secure channel (not a public one).</span>
+    <span class="sub">Share these credentials with ${esc(op.company)} through a secure channel (not a public one).${op.cloud ? ' This is a real cloud login — it works from any device.' : ''}</span>
     <div class="credential-box">
       <div><b>Login ID:</b> ${esc(op.email)}</div>
       <div><b>Temporary password:</b> ${esc(op.tempPasswordPlain)}</div>
@@ -3248,6 +3278,17 @@ function wireMain(actor, effectiveOp){
       if(act === 'editinfo'){ openOperatorInfoModal(op); }
       if(act === 'toggle'){ op.active = !op.active; persist(); renderMain(); toast(op.active?'Operator activated.':'Operator deactivated.'); }
       if(act === 'reset'){
+        if(window.GoStatementLive && op.passwordHash == null){
+          // Real cloud account — reset its actual Supabase Auth password (works
+          // on any device), instead of writing a local-only hash that would
+          // never match what the operator types on their own phone/PC.
+          btn.disabled = true;
+          GoStatementLive.provisionOperatorLogin({ operatorId: op.id, company: op.company, terminalCode: op.terminal, email: op.email })
+            .then(cred=>{ showCredentialModal({ company: op.company, email: cred.login_email, tempPasswordPlain: cred.password, terminal: op.terminal, cloud:true }); })
+            .catch(err=>{ toast('Could not reset password: ' + err.message); })
+            .finally(()=>{ btn.disabled = false; });
+          return;
+        }
         const temp = tempPasswordFor(op.terminal, op.company+Date.now());
         sha256Hex(temp).then(h=>{ op.passwordHash = h; op.tempPasswordPlain = temp; op.mustChange = true; persist(); showCredentialModal(op); });
       }
