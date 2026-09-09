@@ -631,7 +631,14 @@ async function cloudLoadAll(){
       const code = o.terminals ? o.terminals.code : null;
       if(!code) continue;
       const existing = STATE.operators.find(x => x.terminal === code && x.company === o.company);
-      if(existing){ existing.id = o.id; existing.email = o.email; existing.altEmail = o.alt_email||''; existing.active = o.active !== false; existing.invoiceSeq = o.invoice_seq; existing.defaultTosRate = Number(o.default_tos_rate)||10; existing.companyName = o.company_name||''; existing.companyAddress = o.company_address||''; }
+      if(existing){
+        existing.id = o.id; existing.email = o.email; existing.altEmail = o.alt_email||''; existing.active = o.active !== false; existing.invoiceSeq = o.invoice_seq; existing.defaultTosRate = Number(o.default_tos_rate)||10; existing.companyName = o.company_name||''; existing.companyAddress = o.company_address||'';
+        // Every operator now has a real Supabase Auth login (backfilled). Clear
+        // any stale pre-cloud local password so the app stops treating this
+        // operator as a "legacy local-only" account (which broke Reset Password
+        // and the Company Info warning for operators that predate the cloud).
+        existing.passwordHash = null; existing.mustChange = false; delete existing.tempPasswordPlain;
+      }
       else STATE.operators.push({ id: o.id, terminal: code, company: o.company, email: o.email, altEmail: o.alt_email||'', passwordHash: null, mustChange:false, active: o.active !== false, invoiceSeq: o.invoice_seq, defaultTosRate: Number(o.default_tos_rate)||10, companyName: o.company_name||'', companyAddress: o.company_address||'' });
     }
 
@@ -2868,7 +2875,13 @@ function openAddOperatorModal(){
     // Cloud path: create the directory record + a REAL Supabase Auth login
     // together, so the operator can sign in from any device immediately —
     // no more "reset password only works on the admin's own browser" bug.
-    if(window.GoStatementLive){
+    const cloudConnected = window.GoStatementLive && Object.keys(TERMINAL_IDS).length > 0;
+    if(window.GoStatementLive && !cloudConnected){
+      errEl.textContent = 'Not connected to the cloud in this session — sign out and sign back in with the cloud admin email, then try again.';
+      errEl.style.display = 'block';
+      return;
+    }
+    if(cloudConnected){
       const submitBtn = e.target.querySelector('button[type="submit"]');
       submitBtn.disabled = true; submitBtn.textContent = 'Creating…';
       try{
@@ -3278,7 +3291,12 @@ function wireMain(actor, effectiveOp){
       if(act === 'editinfo'){ openOperatorInfoModal(op); }
       if(act === 'toggle'){ op.active = !op.active; persist(); renderMain(); toast(op.active?'Operator activated.':'Operator deactivated.'); }
       if(act === 'reset'){
-        if(window.GoStatementLive && op.passwordHash == null){
+        const cloudConnected = window.GoStatementLive && Object.keys(TERMINAL_IDS).length > 0;
+        if(window.GoStatementLive && !cloudConnected){
+          toast('Not connected to the cloud in this session — sign out and sign back in with the cloud admin email, then try again.');
+          return;
+        }
+        if(cloudConnected){
           // Real cloud account — reset its actual Supabase Auth password (works
           // on any device), instead of writing a local-only hash that would
           // never match what the operator types on their own phone/PC.
