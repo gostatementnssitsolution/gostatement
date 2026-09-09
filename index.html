@@ -1486,12 +1486,21 @@ class SimplePdf {
     this.pageRefs = [];
     this.fontHelv = this._add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
     this.fontHelvBold = this._add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>');
+    this.imageObjs = {}; // name -> object number, shared across every page in this document
   }
   _add(body){ this.objects.push(body); return this.objects.length; }
+  // jpegBytes: a binary string (one JS char = one byte) — e.g. from atob() on a
+  // canvas.toDataURL('image/jpeg') data URL. Embedded as-is via DCTDecode.
+  addImageXObject(name, jpegBytes, width, height){
+    const body = `<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpegBytes.length} >>\nstream\n${jpegBytes}\nendstream`;
+    this.imageObjs[name] = this._add(body);
+  }
   addPage(contentOps, w, h){
     const contentBody = `<< /Length ${contentOps.length} >>\nstream\n${contentOps}endstream`;
     const contentObj = this._add(contentBody);
-    const pageBody = `<< /Type /Page /Parent @@PAGES@@ 0 R /MediaBox [0 0 ${w} ${h}] /Resources << /Font << /F1 ${this.fontHelv} 0 R /F2 ${this.fontHelvBold} 0 R >> >> /Contents ${contentObj} 0 R >>`;
+    const xobjEntries = Object.entries(this.imageObjs).map(([nm,n])=>`/${nm} ${n} 0 R`).join(' ');
+    const resources = `<< /Font << /F1 ${this.fontHelv} 0 R /F2 ${this.fontHelvBold} 0 R >>${xobjEntries?` /XObject << ${xobjEntries} >>`:''} >>`;
+    const pageBody = `<< /Type /Page /Parent @@PAGES@@ 0 R /MediaBox [0 0 ${w} ${h}] /Resources ${resources} /Contents ${contentObj} 0 R >>`;
     this.pageRefs.push(this._add(pageBody));
   }
   build(){
@@ -1636,16 +1645,45 @@ function buildInvoiceNo(terminalCode, periodTo, invoiceSeq){
   return `${terminalCode}TOS${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(invoiceSeq||0).padStart(2,'0')}`;
 }
 
-function buildManualInvoicePdf(inv){
+// Loads the real NSS logo once, re-encodes it as JPEG via canvas (so it can be
+// embedded in our hand-built PDF with a plain DCTDecode stream — no PNG/zlib
+// decoder needed on our side), and caches the result for every PDF after.
+let NSS_LOGO_CACHE = undefined; // undefined = not attempted yet, null = failed/unavailable
+async function getNssLogoJpeg(){
+  if(NSS_LOGO_CACHE !== undefined) return NSS_LOGO_CACHE;
+  try{
+    const img = new Image();
+    const loaded = new Promise((resolve,reject)=>{ img.onload=resolve; img.onerror=reject; });
+    img.src = './nss-logo.png';
+    await loaded;
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,canvas.width,canvas.height); // flatten transparency to white
+    ctx.drawImage(img,0,0);
+    const b64 = canvas.toDataURL('image/jpeg',0.92).split(',')[1];
+    NSS_LOGO_CACHE = { bytes: atob(b64), width: canvas.width, height: canvas.height };
+  }catch(e){ console.warn('GoStatement Live: NSS logo unavailable, using placeholder.', e); NSS_LOGO_CACHE = null; }
+  return NSS_LOGO_CACHE;
+}
+
+async function buildManualInvoicePdf(inv){
   const W=595, H=842, M=40, tableW=W-2*M;
   const pdf = new SimplePdf();
+  const logo = await getNssLogoJpeg();
   let ops = '';
 
   ops += pdfRect(0, H-6, W, 6, PDF_COLOR.maroon);
 
   let y = H-40;
-  ops += pdfRect(M-6, y-28, 42, 26, PDF_COLOR.maroon);
-  ops += pdfTextCenter(M-6+21, y-16, 'NSS', 'F2', 10, PDF_COLOR.white);
+  if(logo){
+    const boxH = 30, boxW = boxH * (logo.width/logo.height);
+    pdf.addImageXObject('Im1', logo.bytes, logo.width, logo.height);
+    ops += `q ${boxW.toFixed(2)} 0 0 ${boxH.toFixed(2)} ${(M-6).toFixed(2)} ${(y-boxH+2).toFixed(2)} cm /Im1 Do Q\n`;
+  } else {
+    ops += pdfRect(M-6, y-28, 42, 26, PDF_COLOR.maroon);
+    ops += pdfTextCenter(M-6+21, y-16, 'NSS', 'F2', 10, PDF_COLOR.white);
+  }
   ops += pdfText(M+46, y, 'NSS IT SOLUTION SDN BHD', 'F2', 15, PDF_COLOR.maroon);
   ops += pdfText(M+46, y-15, inv.terminalName, 'F1', 9.5, PDF_COLOR.black);
   ops += pdfText(M+46, y-27, inv.terminalCity+', Malaysia', 'F1', 9, PDF_COLOR.gray);
@@ -2215,7 +2253,7 @@ function adminDirectoryHtml(){
                 <td style="text-align:left;">
                   <div class="op-row">
                     <div class="op-badge">${initials(o.company)}</div>
-                    <div class="op-meta"><div class="name">${esc(o.company)}</div><div class="email">${esc(o.email)}</div></div>
+                    <div class="op-meta"><div class="name">${esc(o.company)}${(!o.companyName || !o.companyAddress) ? ' <span class="pill pill-accent" style="font-size:10px; padding:2px 6px;" title="Add the legal company name + billing address for Manual Invoices">Info needed</span>' : ''}</div><div class="email">${esc(o.email)}</div></div>
                   </div>
                 </td>
                 <td><span class="pill pill-${o.terminal.toLowerCase()}">${o.terminal}</span></td>
@@ -3372,7 +3410,7 @@ function operatorManualInvoiceHtml(op){
 
 async function downloadManualInvoicePdf(inv){
   const t = INVOICE_TERMINAL_LABEL[inv.terminals?inv.terminals.code:'KT'] || INVOICE_TERMINAL_LABEL.KT;
-  const bytes = buildManualInvoicePdf({
+  const bytes = await buildManualInvoicePdf({
     terminalName: t.name, terminalCity: t.city,
     invoiceNo: inv.invoice_no, invoiceDate: fmtInvoiceDate(inv.invoice_date),
     companyName: inv.bill_to_name || (inv.operators?inv.operators.company:''), companyAddress: inv.bill_to_address || '',
