@@ -631,8 +631,8 @@ async function cloudLoadAll(){
       const code = o.terminals ? o.terminals.code : null;
       if(!code) continue;
       const existing = STATE.operators.find(x => x.terminal === code && x.company === o.company);
-      if(existing){ existing.id = o.id; existing.email = o.email; existing.active = o.active !== false; existing.invoiceSeq = o.invoice_seq; existing.defaultTosRate = Number(o.default_tos_rate)||10; existing.companyName = o.company_name||''; existing.companyAddress = o.company_address||''; }
-      else STATE.operators.push({ id: o.id, terminal: code, company: o.company, email: o.email, passwordHash: null, mustChange:false, active: o.active !== false, invoiceSeq: o.invoice_seq, defaultTosRate: Number(o.default_tos_rate)||10, companyName: o.company_name||'', companyAddress: o.company_address||'' });
+      if(existing){ existing.id = o.id; existing.email = o.email; existing.altEmail = o.alt_email||''; existing.active = o.active !== false; existing.invoiceSeq = o.invoice_seq; existing.defaultTosRate = Number(o.default_tos_rate)||10; existing.companyName = o.company_name||''; existing.companyAddress = o.company_address||''; }
+      else STATE.operators.push({ id: o.id, terminal: code, company: o.company, email: o.email, altEmail: o.alt_email||'', passwordHash: null, mustChange:false, active: o.active !== false, invoiceSeq: o.invoice_seq, defaultTosRate: Number(o.default_tos_rate)||10, companyName: o.company_name||'', companyAddress: o.company_address||'' });
     }
 
     const entries = await GoStatementLive.loadEntries();
@@ -2794,12 +2794,19 @@ function openChangePasswordModal(){
 // (not just per-invoice) so Manual Invoice generation and Excel import both
 // default to it — editable here any time it changes.
 function openOperatorInfoModal(op){
+  const hasCloudAccount = op.passwordHash === null; // cloud (Supabase Auth) accounts have no local hash
   openModal(`
     <h3>Company Info — ${esc(op.company)}</h3>
-    <span class="sub">Used as the "Bill To" name and address on Manual Invoices and statements.</span>
+    <span class="sub">Legal name + address are used as the "Bill To" on Manual Invoices and statements.</span>
     <form id="opInfoForm">
       <div class="field"><label>Legal company name</label><input type="text" id="opiName" value="${esc(op.companyName || op.company)}" placeholder="e.g. SANI EXPRESS SDN BHD"></div>
       <div class="field"><label>Billing address</label><textarea id="opiAddress" rows="3" placeholder="e.g. KOMPLEKS TERMINAL SANI EXPRESS, PERSIARAN KLANG SENTRAL 2, 41050 KLANG">${esc(op.companyAddress || '')}</textarea></div>
+      <div class="field">
+        <label>Contact / login email</label>
+        <input type="email" id="opiEmail" value="${esc(op.email || '')}" placeholder="operator@example.com">
+        ${hasCloudAccount ? `<span class="sub" style="display:block; margin-top:4px; color:var(--bad);">This updates the directory record only — it does NOT change their existing sign-in email. To move their login to a new email, deactivate this account and invite a fresh one with the new address.</span>` : ''}
+      </div>
+      <div class="field"><label>Additional email (optional — e.g. accounts/finance CC)</label><input type="email" id="opiAltEmail" value="${esc(op.altEmail || '')}" placeholder="finance@example.com"></div>
       <div class="modal-actions">
         <button type="button" class="btn" id="opiCancel">Cancel</button>
         <button type="submit" class="btn btn-primary">Save</button>
@@ -2811,11 +2818,15 @@ function openOperatorInfoModal(op){
     e.preventDefault();
     const companyName = document.getElementById('opiName').value.trim();
     const companyAddress = document.getElementById('opiAddress').value.trim();
+    const email = document.getElementById('opiEmail').value.trim();
+    const altEmail = document.getElementById('opiAltEmail').value.trim();
     op.companyName = companyName;
     op.companyAddress = companyAddress;
+    op.email = email;
+    op.altEmail = altEmail;
     persist();
     if(window.GoStatementLive){
-      try{ await GoStatementLive.updateOperator(op.id, { company_name: companyName, company_address: companyAddress }); }
+      try{ await GoStatementLive.updateOperator(op.id, { company_name: companyName, company_address: companyAddress, email, alt_email: altEmail }); }
       catch(err){ toast('Saved locally — cloud sync failed: ' + err.message); }
     }
     closeModal();
