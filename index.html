@@ -2804,7 +2804,7 @@ function openOperatorInfoModal(op){
       <div class="field">
         <label>Contact / login email</label>
         <input type="email" id="opiEmail" value="${esc(op.email || '')}" placeholder="operator@example.com">
-        ${hasCloudAccount ? `<span class="sub" style="display:block; margin-top:4px; color:var(--bad);">This updates the directory record only — it does NOT change their existing sign-in email. To move their login to a new email, deactivate this account and invite a fresh one with the new address.</span>` : ''}
+        ${hasCloudAccount ? `<span class="sub" style="display:block; margin-top:4px;">This updates the directory record only — it does NOT change their existing sign-in email. Their statements, invoices and trip history are saved against this company record, so nothing is lost if the login email changes later.</span>` : ''}
       </div>
       <div class="field"><label>Additional email (optional — e.g. accounts/finance CC)</label><input type="email" id="opiAltEmail" value="${esc(op.altEmail || '')}" placeholder="finance@example.com"></div>
       <div class="modal-actions">
