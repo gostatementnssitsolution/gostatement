@@ -1748,10 +1748,11 @@ async function getNssLogoJpeg(){
   return NSS_LOGO_CACHE;
 }
 
-async function buildManualInvoicePdf(inv){
+// Draws one invoice as a page onto an existing SimplePdf instance — shared
+// by both the single-invoice download and the "Download All" batch export
+// so a whole month's invoices can be combined into one PDF.
+function drawManualInvoicePage(pdf, inv, logo){
   const W=595, H=842, M=40, tableW=W-2*M;
-  const pdf = new SimplePdf();
-  const logo = await getNssLogoJpeg();
   let ops = '';
 
   ops += pdfRect(0, H-6, W, 6, PDF_COLOR.maroon);
@@ -1759,7 +1760,7 @@ async function buildManualInvoicePdf(inv){
   let y = H-40;
   if(logo){
     const boxH = 30, boxW = boxH * (logo.width/logo.height);
-    pdf.addImageXObject('Im1', logo.bytes, logo.width, logo.height);
+    if(!pdf.imageObjs['Im1']) pdf.addImageXObject('Im1', logo.bytes, logo.width, logo.height);
     ops += `q ${boxW.toFixed(2)} 0 0 ${boxH.toFixed(2)} ${(M-6).toFixed(2)} ${(y-boxH+2).toFixed(2)} cm /Im1 Do Q\n`;
   } else {
     ops += pdfRect(M-6, y-28, 42, 26, PDF_COLOR.maroon);
@@ -1842,6 +1843,21 @@ async function buildManualInvoicePdf(inv){
   ops += pdfText(M, y, inv.terminalName, 'F1', 8.5, PDF_COLOR.gray);
 
   pdf.addPage(ops, W, H);
+}
+
+async function buildManualInvoicePdf(inv){
+  const pdf = new SimplePdf();
+  const logo = await getNssLogoJpeg();
+  drawManualInvoicePage(pdf, inv, logo);
+  return pdf.build();
+}
+
+// One combined PDF, one page per invoice — for "Download All Invoices" by
+// month/terminal so admin doesn't have to save 20+ separate files.
+async function buildManualInvoicesBatchPdf(invoiceSpecs){
+  const pdf = new SimplePdf();
+  const logo = await getNssLogoJpeg();
+  for(const inv of invoiceSpecs) drawManualInvoicePage(pdf, inv, logo);
   return pdf.build();
 }
 
@@ -3379,16 +3395,25 @@ function monthRange(period){
   return { from, to };
 }
 
+let MANUAL_INVOICES_LOADING = false;
+let MANUAL_INVOICES_LOAD_ERROR = null;
 async function loadManualInvoicesForView(){
   if(!window.GoStatementLive) return;
   const terminalId = TERMINAL_IDS[VIEW.manualInvoice.terminal];
-  if(!terminalId) return;
+  if(!terminalId) return; // terminal list hasn't synced from Supabase yet — a login/session refresh will retry this.
+  if(MANUAL_INVOICES_LOADING) return; // already in flight — don't stack duplicate requests every render
   const { from, to } = monthRange(VIEW.manualInvoice.period);
   const key = terminalId+'|'+from+'|'+to;
+  MANUAL_INVOICES_LOADING = true;
+  MANUAL_INVOICES_LOAD_ERROR = null;
   try{
     MANUAL_INVOICES_CACHE = await GoStatementLive.loadManualInvoices({ terminalId, periodFrom: from, periodTo: to });
     MANUAL_INVOICES_LOADED_KEY = key;
-  }catch(err){ console.error('loadManualInvoicesForView failed', err); }
+  }catch(err){
+    console.error('loadManualInvoicesForView failed', err);
+    MANUAL_INVOICES_LOAD_ERROR = err.message || 'Could not load manual invoices.';
+  }
+  MANUAL_INVOICES_LOADING = false;
   if(VIEW.route === 'manualinvoice') renderMain();
 }
 
@@ -3430,10 +3455,18 @@ function manualImportPreviewHtml(){
 function adminManualInvoiceHtml(){
   const { from, to } = monthRange(VIEW.manualInvoice.period);
   const terminalId = TERMINAL_IDS[VIEW.manualInvoice.terminal];
-  const key = terminalId+'|'+from+'|'+to;
-  if(terminalId && MANUAL_INVOICES_LOADED_KEY !== key) loadManualInvoicesForView();
-  const loading = !terminalId || MANUAL_INVOICES_LOADED_KEY !== key;
-  const invoices = loading ? [] : MANUAL_INVOICES_CACHE;
+  const key = terminalId ? terminalId+'|'+from+'|'+to : null;
+  const loaded = terminalId && MANUAL_INVOICES_LOADED_KEY === key;
+  if(terminalId && !loaded && !MANUAL_INVOICES_LOADING) loadManualInvoicesForView();
+  const loading = !loaded;
+  const invoices = loaded ? MANUAL_INVOICES_CACHE : [];
+  const noTerminalYet = !terminalId; // cloud sync (login) hasn't populated terminals yet
+
+  let statusLine;
+  if(noTerminalYet) statusLine = `<span style="color:var(--bad);">Not connected to the cloud yet — <button class="btn btn-sm" id="btn-mi-retry-sync" style="padding:2px 8px;">Retry sync</button></span>`;
+  else if(MANUAL_INVOICES_LOAD_ERROR) statusLine = `<span style="color:var(--bad);">Failed to load: ${esc(MANUAL_INVOICES_LOAD_ERROR)} — <button class="btn btn-sm" id="btn-mi-retry-load" style="padding:2px 8px;">Retry</button></span>`;
+  else if(loading) statusLine = `<span style="color:var(--ink-faint);">Loading…</span>`;
+  else statusLine = `<span style="color:var(--ink-faint); font-size:12.5px;">${invoices.length} invoice(s) for ${fmtDate(from)} – ${fmtDate(to)}</span>`;
 
   return `
     <div id="topbar">
@@ -3445,12 +3478,14 @@ function adminManualInvoiceHtml(){
         </select>
         <input type="month" id="miPeriodSel" class="btn btn-sm" value="${VIEW.manualInvoice.period}">
         <label class="btn btn-sm" style="cursor:pointer;">Upload Excel<input type="file" id="miUploadFile" accept=".xlsx" style="display:none;"></label>
+        <button class="btn btn-sm" id="btn-mi-download-summary" ${!invoices.length?'disabled':''}>Download Summary (PDF)</button>
+        <button class="btn btn-sm" id="btn-mi-download-all" ${!invoices.length?'disabled':''}>Download All Invoices (PDF)</button>
         <button class="btn btn-accent btn-sm" id="btn-mi-add">+ Add Manual Invoice</button>
       </div>
     </div>
     <div id="miImportPreviewWrap">${MANUAL_IMPORT_PREVIEW ? manualImportPreviewHtml() : ''}</div>
     <div class="card table-card">
-      <div class="table-toolbar"><span style="font-size:12.5px; color:var(--ink-faint);">${loading?'Loading…':invoices.length+' invoice(s) for '+fmtDate(from)+' – '+fmtDate(to)}</span></div>
+      <div class="table-toolbar">${statusLine}</div>
       <div class="scrollx">
         <table>
           <thead><tr><th style="text-align:left;">Operator</th><th>Invoice No.</th><th>Qty</th><th>Rate</th><th>Grand Total</th><th>Status</th><th style="text-align:right;">Actions</th></tr></thead>
@@ -3486,19 +3521,26 @@ function adminManualInvoiceHtml(){
 
 function operatorManualInvoiceHtml(op){
   const key = 'op|'+op.id;
-  if(MANUAL_INVOICES_LOADED_KEY !== key){
+  const loaded = MANUAL_INVOICES_LOADED_KEY === key;
+  if(!loaded && !MANUAL_INVOICES_LOADING){
+    MANUAL_INVOICES_LOADING = true;
     (async ()=>{
-      try{ MANUAL_INVOICES_CACHE = await GoStatementLive.loadManualInvoices({ operatorId: op.id }); MANUAL_INVOICES_LOADED_KEY = key; }
-      catch(err){ console.error('load operator manual invoices failed', err); }
+      try{ MANUAL_INVOICES_CACHE = await GoStatementLive.loadManualInvoices({ operatorId: op.id }); MANUAL_INVOICES_LOADED_KEY = key; MANUAL_INVOICES_LOAD_ERROR = null; }
+      catch(err){ console.error('load operator manual invoices failed', err); MANUAL_INVOICES_LOAD_ERROR = err.message || 'Could not load your invoices.'; }
+      MANUAL_INVOICES_LOADING = false;
       if(VIEW.route==='manualinvoice') renderMain();
     })();
   }
-  const loading = MANUAL_INVOICES_LOADED_KEY !== key;
-  const invoices = loading ? [] : MANUAL_INVOICES_CACHE;
+  const loading = !loaded;
+  const invoices = loaded ? MANUAL_INVOICES_CACHE : [];
+  const statusLine = MANUAL_INVOICES_LOAD_ERROR
+    ? `<span style="color:var(--bad);">Failed to load: ${esc(MANUAL_INVOICES_LOAD_ERROR)} — <button class="btn btn-sm" id="btn-mi-op-retry" style="padding:2px 8px;">Retry</button></span>`
+    : (loading ? `<span style="color:var(--ink-faint);">Loading…</span>` : '');
   return `
     <div id="topbar">
       <div><h1>Manual Invoice</h1><div class="desc">TOS Pick Up Charge statements for ${esc(op.company)}</div></div>
     </div>
+    ${statusLine ? `<div style="margin-bottom:10px; font-size:13px;">${statusLine}</div>` : ''}
     <div class="card table-card">
       <div class="scrollx">
         <table>
@@ -3530,16 +3572,62 @@ function operatorManualInvoiceHtml(op){
   `;
 }
 
-async function downloadManualInvoicePdf(inv){
+function invoiceToDrawSpec(inv){
   const t = INVOICE_TERMINAL_LABEL[inv.terminals?inv.terminals.code:'KT'] || INVOICE_TERMINAL_LABEL.KT;
-  const bytes = await buildManualInvoicePdf({
+  return {
     terminalName: t.name, terminalCity: t.city,
     invoiceNo: inv.invoice_no, invoiceDate: fmtInvoiceDate(inv.invoice_date),
     companyName: inv.bill_to_name || (inv.operators?inv.operators.company:''), companyAddress: inv.bill_to_address || '',
     periodLabel: fmtSlashDate(inv.period_from, true) + ' - ' + fmtSlashDate(inv.period_to, true),
     quantity: inv.quantity, rate: Number(inv.rate), amount: Number(inv.amount), rounding: Number(inv.rounding), grandTotal: Number(inv.grand_total)
-  });
+  };
+}
+async function downloadManualInvoicePdf(inv){
+  const bytes = await buildManualInvoicePdf(invoiceToDrawSpec(inv));
   await saveViaDownloads(bytes, `${inv.invoice_no.replace(/\//g,'-')}.pdf`);
+}
+// One PDF, one page per invoice — for bulk "Download All Invoices" by month/terminal.
+async function downloadManualInvoicesBatchPdf(invoices, terminalCode, periodTo){
+  const specs = invoices.map(invoiceToDrawSpec);
+  const bytes = await buildManualInvoicesBatchPdf(specs);
+  const monthLabel = new Date(periodTo+'T00:00:00').toLocaleDateString('en-MY',{month:'short', year:'numeric'}).replace(' ','-');
+  await saveViaDownloads(bytes, `manual-invoices-${terminalCode}-${monthLabel}.pdf`);
+}
+// One-page summary table across every invoice for the terminal/period — the
+// "how much does each operator owe this month" overview, reusing the same
+// generic table PDF renderer as settlement statements.
+async function downloadManualInvoiceSummaryPdf(invoices, terminalCode, periodFrom, periodTo){
+  const usableW = 515;
+  const columns = [
+    {label:'Operator', w:170, align:'left'},
+    {label:'Invoice No.', w:125, align:'left'},
+    {label:'Qty', w:45, align:'right'},
+    {label:'Rate', w:55, align:'right'},
+    {label:'Grand Total', w:80, align:'right'},
+    {label:'Status', w:0, align:'right'},
+  ];
+  columns[5].w = usableW - columns.slice(0,5).reduce((s,c)=>s+c.w,0);
+  const sorted = invoices.slice().sort((a,b)=> (a.operators?a.operators.company:'').localeCompare(b.operators?b.operators.company:''));
+  const rows = sorted.map(inv => {
+    const row = [inv.operators?inv.operators.company:'', inv.invoice_no, String(inv.quantity), Number(inv.rate).toFixed(2), Number(inv.grand_total).toFixed(2), inv.status==='finalized'?'Finalized':'Draft'];
+    row.__colors = [null,null,null,null,null, inv.status==='finalized'?PDF_COLOR.good:PDF_COLOR.gray];
+    return row;
+  });
+  const totalQty = invoices.reduce((s,i)=>s+Number(i.quantity),0);
+  const totalGrand = invoices.reduce((s,i)=>s+Number(i.grand_total),0);
+  const t = INVOICE_TERMINAL_LABEL[terminalCode] || INVOICE_TERMINAL_LABEL.KT;
+  const bytes = renderPdfDocument({
+    docTitle: 'MANUAL INVOICE SUMMARY',
+    brandSub: t.name,
+    metaLine: `${fmtSlashDate(periodFrom,true)} - ${fmtSlashDate(periodTo,true)}`,
+    partyLabel: 'TERMINAL', partyName: t.name, partySub: `${invoices.length} operator(s)`,
+    bigLabel: 'TOTAL GRAND', bigValue: fmtMoney(totalGrand),
+    columns, rows,
+    totalRows: [{ cells: ['','Total', String(totalQty), '', totalGrand.toFixed(2), ''], bold:true, colors:[null,null,null,null,PDF_COLOR.black,null] }],
+    footNote: '',
+  });
+  const monthLabel = new Date(periodTo+'T00:00:00').toLocaleDateString('en-MY',{month:'short', year:'numeric'}).replace(' ','-');
+  await saveViaDownloads(bytes, `manual-invoice-summary-${terminalCode}-${monthLabel}.pdf`);
 }
 async function downloadManualTripListPdf(inv){
   let trips = [];
@@ -3770,6 +3858,8 @@ function wireManualInvoice(actor, effectiveOp){
   if(VIEW.route !== 'manualinvoice') return;
 
   if(effectiveOp){
+    const opRetry = document.getElementById('btn-mi-op-retry');
+    if(opRetry) opRetry.addEventListener('click', ()=>{ MANUAL_INVOICES_LOAD_ERROR = null; MANUAL_INVOICES_LOADED_KEY = null; renderMain(); });
     document.querySelectorAll('[data-mi-op-toggle]').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
         const id = btn.getAttribute('data-mi-op-toggle');
@@ -3799,9 +3889,32 @@ function wireManualInvoice(actor, effectiveOp){
   }
 
   const terminalSel = document.getElementById('miTerminalSel');
-  if(terminalSel) terminalSel.addEventListener('change', ()=>{ VIEW.manualInvoice.terminal = terminalSel.value; MANUAL_IMPORT_PREVIEW=null; MANUAL_INVOICES_LOADED_KEY=null; renderMain(); });
+  if(terminalSel) terminalSel.addEventListener('change', ()=>{ VIEW.manualInvoice.terminal = terminalSel.value; MANUAL_IMPORT_PREVIEW=null; MANUAL_INVOICES_LOADED_KEY=null; MANUAL_INVOICES_LOAD_ERROR=null; renderMain(); });
   const periodSel = document.getElementById('miPeriodSel');
-  if(periodSel) periodSel.addEventListener('change', ()=>{ VIEW.manualInvoice.period = periodSel.value; MANUAL_IMPORT_PREVIEW=null; MANUAL_INVOICES_LOADED_KEY=null; renderMain(); });
+  if(periodSel) periodSel.addEventListener('change', ()=>{ VIEW.manualInvoice.period = periodSel.value; MANUAL_IMPORT_PREVIEW=null; MANUAL_INVOICES_LOADED_KEY=null; MANUAL_INVOICES_LOAD_ERROR=null; renderMain(); });
+
+  const retrySync = document.getElementById('btn-mi-retry-sync');
+  if(retrySync) retrySync.addEventListener('click', async ()=>{
+    toast('Retrying cloud sync…');
+    await cloudLoadAll();
+    renderMain();
+  });
+  const retryLoad = document.getElementById('btn-mi-retry-load');
+  if(retryLoad) retryLoad.addEventListener('click', ()=>{ MANUAL_INVOICES_LOAD_ERROR = null; MANUAL_INVOICES_LOADED_KEY = null; renderMain(); });
+
+  const downloadSummaryBtn = document.getElementById('btn-mi-download-summary');
+  if(downloadSummaryBtn) downloadSummaryBtn.addEventListener('click', async ()=>{
+    if(!MANUAL_INVOICES_CACHE.length){ toast('No invoices to summarize for this period.'); return; }
+    const { from, to } = monthRange(VIEW.manualInvoice.period);
+    await downloadManualInvoiceSummaryPdf(MANUAL_INVOICES_CACHE, VIEW.manualInvoice.terminal, from, to);
+  });
+  const downloadAllBtn = document.getElementById('btn-mi-download-all');
+  if(downloadAllBtn) downloadAllBtn.addEventListener('click', async ()=>{
+    if(!MANUAL_INVOICES_CACHE.length){ toast('No invoices to download for this period.'); return; }
+    toast(`Building ${MANUAL_INVOICES_CACHE.length}-page PDF…`);
+    const { to } = monthRange(VIEW.manualInvoice.period);
+    await downloadManualInvoicesBatchPdf(MANUAL_INVOICES_CACHE, VIEW.manualInvoice.terminal, to);
+  });
 
   const uploadFile = document.getElementById('miUploadFile');
   if(uploadFile) uploadFile.addEventListener('change', async (e)=>{
