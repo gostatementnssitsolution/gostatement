@@ -702,7 +702,7 @@ const VIEW = {
   reconcileSearch: '',
   sortDir: 'desc',
   entryForm: { terminal:'KT', operatorId:null, date:null },
-  manualInvoice: { terminal:'KT', period: new Date().toISOString().slice(0,7), operatorId:null },
+  manualInvoice: { terminal:'KT', period: new Date().toISOString().slice(0,7), operatorId:null, expandedId:null },
 };
 
 /* ============================================================
@@ -1417,6 +1417,8 @@ function openRowDetailModal(terminal, company, date){
   const { deductions, additions, hasItems, note } = rowDeductionsAdditions(terminal, company, date, row);
   const status = getEntryStatus(terminal, company, date);
   const recon = reconcileRow(terminal, company, date, row);
+  const actor = currentActor();
+  const isAdmin = actor && actor.type === 'admin';
   const line = (it, color) => `
     <div style="display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px solid var(--border); font-size:13px;">
       <span style="color:var(--ink-soft);">${esc(it.label)}</span><span class="num" style="color:${color};">${it.amount<0?'−':'+'}${fmtAbs(it.amount)}</span>
@@ -1433,16 +1435,43 @@ function openRowDetailModal(terminal, company, date){
       ${additions.length ? additions.map(a=>line(a,'var(--good)')).join('') : '<div style="font-size:12.5px; color:var(--ink-faint); padding:4px 0;">None</div>'}
     </div>
     <div style="margin-bottom:14px;">
-      <div class="eyebrow" style="color:var(--bad); margin-bottom:4px;">Deductions</div>
+      <div class="eyebrow" style="color:var(--bad); margin-bottom:4px;">Deductions <span style="font-weight:400; color:var(--ink-faint);">(RFID, undersales, and any other charge subtracted from the sale)</span></div>
       ${deductions.length ? deductions.map(d=>line(d,'var(--bad)')).join('') : '<div style="font-size:12.5px; color:var(--ink-faint); padding:4px 0;">None</div>'}
     </div>
     <div style="display:flex; justify-content:space-between; padding:10px 0 0; font-weight:700;"><span>Net payout (recorded)</span><span class="num">${fmtMoney(row[6])}</span></div>
     ${recon.mismatch ? `<div style="display:flex; justify-content:space-between; padding:4px 0; font-weight:700; color:var(--bad);"><span>Expected from additions/deductions</span><span class="num">${fmtMoney(recon.expected)} (diff ${fmtMoney(recon.diff)})</span></div>` : ''}
     ${!hasItems ? `<div style="color:var(--ink-faint); font-size:11.5px; margin-top:10px;">Full line-by-line itemization is shown for entries imported from an Excel file.</div>` : ''}
     ${note ? `<div style="margin-top:14px; padding-top:10px; border-top:1px solid var(--border);"><div class="eyebrow" style="margin-bottom:4px;">Remarks</div><div style="font-size:13px; color:var(--ink-soft);">${esc(note)}</div></div>` : ''}
+    ${isAdmin ? `
+    <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--border);">
+      <div class="eyebrow" style="margin-bottom:8px;">+ Add a deduction or addition (e.g. RFID charge, extra pickup fee)</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <input type="text" id="rowDetailAdjLabel" placeholder="Label — e.g. RFID Charge" style="flex:1.4; min-width:160px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); color:var(--ink);">
+        <input type="number" step="0.01" id="rowDetailAdjAmount" placeholder="Amount (+ addition / − deduction)" style="flex:1; min-width:140px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); color:var(--ink);">
+        <button class="btn btn-sm btn-accent" id="rowDetailAddBtn">Add</button>
+      </div>
+    </div>` : ''}
     <div class="modal-actions"><button class="btn btn-primary" id="rowDetailOk">Close</button></div>
   `);
   document.getElementById('rowDetailOk').addEventListener('click', closeModal);
+  const addBtn = document.getElementById('rowDetailAddBtn');
+  if(addBtn) addBtn.addEventListener('click', ()=>{
+    const label = document.getElementById('rowDetailAdjLabel').value.trim();
+    const amount = parseFloat(document.getElementById('rowDetailAdjAmount').value);
+    if(!label || !amount){ toast('Enter a label and a non-zero amount.'); return; }
+    const rec = ensureEntryRecord(terminal, company, date);
+    if(!rec) return;
+    if(!rec.adjustments) rec.adjustments = [];
+    rec.adjustments.push({ label, amount });
+    // recompute the recorded net payout to include the new line, same formula the Daily Entry form uses.
+    rec.final = rec.sales + rec.stdCharge + rec.manualCharge + rec.undersales + rec.adjustments.reduce((s,a)=>s+(Number(a.amount)||0),0);
+    persist();
+    const op = STATE.operators.find(o=>o.terminal===terminal && o.company===company);
+    if(op) cloudPushEntry({ terminal, operatorId: op.id, date, sales:rec.sales, stdCharge:rec.stdCharge, manualCharge:rec.manualCharge, undersales:rec.undersales, final:rec.final, status: rec.status||'draft', adjustments: rec.adjustments, note: rec.note||'' });
+    toast('Added.');
+    closeModal();
+    openRowDetailModal(terminal, company, date);
+  });
 }
 
 /* ============================================================
@@ -3252,6 +3281,7 @@ let MANUAL_INVOICES_CACHE = [];
 let MANUAL_INVOICES_LOADED_KEY = null;
 let MANUAL_IMPORT_PREVIEW = null;
 let MANUAL_TRIPS_DRAFT = [];
+let MANUAL_INVOICE_TRIPS_CACHE = {}; // invoiceId -> raw trip rows (loaded on first expand)
 
 const INVOICE_TERMINAL_LABEL = {
   KT: { name:'Terminal Bas Kuala Terengganu', city:'Kuala Terengganu', tripSubtitle:'TERMINAL KUALA TERENGGANU' },
@@ -3342,7 +3372,9 @@ function adminManualInvoiceHtml(){
         <table>
           <thead><tr><th style="text-align:left;">Operator</th><th>Invoice No.</th><th>Qty</th><th>Rate</th><th>Grand Total</th><th>Status</th><th style="text-align:right;">Actions</th></tr></thead>
           <tbody>
-            ${invoices.map(inv=>`
+            ${invoices.map(inv=>{
+              const expanded = VIEW.manualInvoice.expandedId === inv.id;
+              return `
               <tr>
                 <td style="text-align:left;">${esc(inv.operators?inv.operators.company:'')}</td>
                 <td>${esc(inv.invoice_no)}</td>
@@ -3352,15 +3384,16 @@ function adminManualInvoiceHtml(){
                 <td><span class="pill ${inv.status==='finalized'?'pill-good':'pill-neutral'}">${inv.status==='finalized'?'Finalized':'Draft'}</span></td>
                 <td style="text-align:right;">
                   <div style="display:flex; gap:6px; justify-content:flex-end; flex-wrap:wrap;">
-                    <button class="btn btn-sm" data-mi-edit="${inv.id}">Edit</button>
-                    <button class="btn btn-sm" data-mi-view-detail="${inv.id}">View Details</button>
+                    <button class="btn btn-sm ${expanded?'btn-accent':''}" data-mi-toggle="${inv.id}">${expanded?'Hide Details ▲':'View / Edit Details ▼'}</button>
                     <button class="btn btn-sm" data-mi-download-invoice="${inv.id}">Invoice PDF</button>
                     <button class="btn btn-sm" data-mi-download-triplist="${inv.id}">Trip List PDF</button>
                     <button class="btn btn-sm" data-mi-toggle-status="${inv.id}">${inv.status==='finalized'?'Reopen':'Finalize'}</button>
                     <button class="btn btn-sm btn-danger" data-mi-delete="${inv.id}">Delete</button>
                   </div>
                 </td>
-              </tr>`).join('') || `<tr><td colspan="7" style="text-align:center; color:var(--ink-faint); padding:20px;">${loading?'Loading…':'No manual invoices for this terminal/period yet. Upload an Excel trip list or add one manually.'}</td></tr>`}
+              </tr>
+              ${expanded ? `<tr><td colspan="7" style="background:var(--surface-2); padding:0;"><div style="padding:18px;">${manualInvoiceInlineFormHtml(inv)}</div></td></tr>` : ''}`;
+            }).join('') || `<tr><td colspan="7" style="text-align:center; color:var(--ink-faint); padding:20px;">${loading?'Loading…':'No manual invoices for this terminal/period yet. Upload an Excel trip list or add one manually.'}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -3388,7 +3421,9 @@ function operatorManualInvoiceHtml(op){
         <table>
           <thead><tr><th style="text-align:left;">Period</th><th>Invoice No.</th><th>Qty</th><th>Grand Total</th><th>Status</th><th style="text-align:right;">Download</th></tr></thead>
           <tbody>
-            ${invoices.map(inv=>`
+            ${invoices.map(inv=>{
+              const expanded = VIEW.manualInvoice.expandedId === inv.id;
+              return `
               <tr>
                 <td style="text-align:left;">${fmtDate(inv.period_from)} – ${fmtDate(inv.period_to)}</td>
                 <td>${esc(inv.invoice_no)}</td>
@@ -3397,12 +3432,14 @@ function operatorManualInvoiceHtml(op){
                 <td><span class="pill ${inv.status==='finalized'?'pill-good':'pill-neutral'}">${inv.status==='finalized'?'Finalized':'Draft'}</span></td>
                 <td style="text-align:right;">
                   <div style="display:flex; gap:6px; justify-content:flex-end;">
-                    <button class="btn btn-sm" data-mi-op-view-detail="${inv.id}">View Details</button>
+                    <button class="btn btn-sm ${expanded?'btn-accent':''}" data-mi-op-toggle="${inv.id}">${expanded?'Hide Details ▲':'View Details ▼'}</button>
                     <button class="btn btn-sm" data-mi-op-download-invoice="${inv.id}">Invoice PDF</button>
                     <button class="btn btn-sm" data-mi-op-download-triplist="${inv.id}">Trip List PDF</button>
                   </div>
                 </td>
-              </tr>`).join('') || `<tr><td colspan="6" style="text-align:center; color:var(--ink-faint); padding:20px;">${loading?'Loading…':'No manual invoices yet.'}</td></tr>`}
+              </tr>
+              ${expanded ? `<tr><td colspan="6" style="background:var(--surface-2); padding:0;"><div style="padding:18px;">${manualInvoiceReadOnlyDetailHtml(inv, MANUAL_INVOICE_TRIPS_CACHE[inv.id])}</div></td></tr>` : ''}`;
+            }).join('') || `<tr><td colspan="6" style="text-align:center; color:var(--ink-faint); padding:20px;">${loading?'Loading…':'No manual invoices yet.'}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -3438,12 +3475,11 @@ async function downloadManualTripListPdf(inv){
 // In-app read-only view of an invoice's trip breakdown — no PDF download
 // needed, so both admin and operator can quickly see exactly which bus
 // (plate no) and trip triggered each TOS Pick Up Charge line.
-async function openManualInvoiceDetailModal(inv){
-  openModal(`<h3>${esc(inv.invoice_no)}</h3><span class="sub">Loading trip details…</span>`);
-  let trips = [];
-  try{ trips = await GoStatementLive.loadManualTripEntries(inv.id); }
-  catch(err){ /* show whatever we have below */ }
-
+// Read-only inline breakdown (operator view) — rendered directly inside the
+// table row, not a popup, so it's easy to read on any screen size. `trips`
+// may be undefined while still loading (the toggle handler fetches it first).
+function manualInvoiceReadOnlyDetailHtml(inv, trips){
+  if(trips === undefined) return `<span class="sub">Loading trip details…</span>`;
   const opName = inv.operators ? inv.operators.company : '';
   const termCode = inv.terminals ? inv.terminals.code : '';
   const termName = (INVOICE_TERMINAL_LABEL[termCode] || {}).name || termCode;
@@ -3483,14 +3519,59 @@ async function openManualInvoiceDetailModal(inv){
       </table>
     </div>` : `<div style="font-size:12.5px; color:var(--ink-faint); padding:10px 0;">No individual trip rows were recorded for this invoice — the quantity (${inv.quantity}) was keyed in directly.</div>`;
 
-  openModal(`
-    <h3>${esc(inv.invoice_no)} — ${esc(opName)}</h3>
-    <span class="sub">Manual Trip List detail — no download needed to review</span>
-    ${summaryHtml}
-    ${tripsHtml}
-    <div class="modal-actions"><button class="btn btn-primary" id="miDetailClose">Close</button></div>
-  `);
-  document.getElementById('miDetailClose').addEventListener('click', closeModal);
+  return `<div><b>${esc(inv.invoice_no)}</b> — ${esc(opName)}</div>${summaryHtml}${tripsHtml}`;
+}
+
+// Admin's inline view+edit panel — same content, but every field is a real
+// input wired to save back to Supabase, right in the table (no popup, so
+// there's room to work and the operator's plate/trip data stays visible
+// while editing).
+function manualInvoiceInlineFormHtml(inv){
+  const op = STATE.operators.find(o=>o.id===inv.operator_id);
+  const rate = Number(inv.rate);
+  const qty = MANUAL_TRIPS_DRAFT.length || inv.quantity;
+  const amount = +(qty*rate).toFixed(2);
+  return `
+    <div style="max-width:960px;">
+      <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:12px; flex-wrap:wrap; gap:6px;">
+        <div><b>${esc(inv.invoice_no)}</b> — ${esc(op?op.company:'')}</div>
+        <span class="sub">Edit trip rows and invoice details directly here — no popup needed.</span>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 160px; gap:12px; margin-bottom:4px;">
+        <div class="field"><label>Bill-to company name</label><input type="text" id="miInlineBillName" value="${esc(inv.bill_to_name||(op?op.company:''))}"></div>
+        <div class="field"><label>Rate (RM/trip)</label><input type="number" step="0.01" id="miInlineRate" value="${rate}"></div>
+      </div>
+      <div class="field"><label>Bill-to address</label><textarea id="miInlineBillAddr" rows="2">${esc(inv.bill_to_address||'')}</textarea></div>
+      <div class="field">
+        <label>Trip rows (${MANUAL_TRIPS_DRAFT.length}) — quantity is derived from these rows when present</label>
+        <div class="scrollx">
+          <table>
+            <thead><tr><th style="text-align:left;">Date</th><th style="text-align:left;">Enter Time</th><th style="text-align:left;">Exit Time</th><th style="text-align:left;">Plate No</th><th style="text-align:left;">Destination</th><th></th></tr></thead>
+            <tbody>
+              ${MANUAL_TRIPS_DRAFT.map((t,i)=>`
+                <tr>
+                  <td><input type="date" class="mi-inline-trip-date" data-idx="${i}" value="${t.tripDate||''}"></td>
+                  <td><input type="text" class="mi-inline-trip-enter" data-idx="${i}" value="${esc(t.enter||'')}" placeholder="09:15 AM"></td>
+                  <td><input type="text" class="mi-inline-trip-exit" data-idx="${i}" value="${esc(t.exit||'')}" placeholder="09:30 AM"></td>
+                  <td><input type="text" class="mi-inline-trip-plate" data-idx="${i}" value="${esc(t.plate||'')}" placeholder="Plate No"></td>
+                  <td><input type="text" class="mi-inline-trip-dest" data-idx="${i}" value="${esc(t.destination||'')}" placeholder="Destination"></td>
+                  <td><button type="button" class="btn btn-sm" data-remove-inline-trip="${i}">✕</button></td>
+                </tr>`).join('') || `<tr><td colspan="6" style="color:var(--ink-faint); font-size:12.5px; text-align:left;">No trip rows — quantity below will be used instead.</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+        <button type="button" class="btn btn-sm" id="btnInlineAddTripRow" style="margin-top:6px;">+ Add trip row</button>
+      </div>
+      <div style="display:flex; gap:16px; align-items:flex-end; margin:12px 0; flex-wrap:wrap;">
+        <div class="field" style="margin:0;"><label>Quantity ${MANUAL_TRIPS_DRAFT.length?'(auto)':'(key in directly)'}</label><input type="number" id="miInlineQty" value="${qty}" ${MANUAL_TRIPS_DRAFT.length?'readonly':''} style="width:120px;"></div>
+        <div style="font-weight:700; padding-bottom:9px;">Amount: <span id="miInlineAmountPreview">RM ${amount.toFixed(2)}</span></div>
+        <div style="margin-left:auto; display:flex; gap:8px;">
+          <button class="btn btn-sm" id="miInlineClose">Close</button>
+          <button class="btn btn-primary btn-sm" id="miInlineSave">Save</button>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 async function openManualInvoiceModal(existingInvoice){
@@ -3606,10 +3687,17 @@ function wireManualInvoice(actor, effectiveOp){
   if(VIEW.route !== 'manualinvoice') return;
 
   if(effectiveOp){
-    document.querySelectorAll('[data-mi-op-view-detail]').forEach(btn=>{
+    document.querySelectorAll('[data-mi-op-toggle]').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
-        const inv = MANUAL_INVOICES_CACHE.find(x=>x.id===btn.getAttribute('data-mi-op-view-detail'));
-        if(inv) await openManualInvoiceDetailModal(inv);
+        const id = btn.getAttribute('data-mi-op-toggle');
+        if(VIEW.manualInvoice.expandedId === id){ VIEW.manualInvoice.expandedId = null; renderMain(); return; }
+        VIEW.manualInvoice.expandedId = id;
+        renderMain(); // show "Loading…" immediately
+        if(!MANUAL_INVOICE_TRIPS_CACHE[id]){
+          try{ MANUAL_INVOICE_TRIPS_CACHE[id] = await GoStatementLive.loadManualTripEntries(id); }
+          catch(e){ MANUAL_INVOICE_TRIPS_CACHE[id] = []; }
+          if(VIEW.manualInvoice.expandedId === id) renderMain();
+        }
       });
     });
     document.querySelectorAll('[data-mi-op-download-invoice]').forEach(btn=>{
@@ -3697,18 +3785,68 @@ function wireManualInvoice(actor, effectiveOp){
   const addBtn = document.getElementById('btn-mi-add');
   if(addBtn) addBtn.addEventListener('click', ()=> openManualInvoiceModal(null));
 
-  document.querySelectorAll('[data-mi-edit]').forEach(btn=>{
+  document.querySelectorAll('[data-mi-toggle]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
-      const inv = MANUAL_INVOICES_CACHE.find(x=>x.id===btn.getAttribute('data-mi-edit'));
-      if(inv) await openManualInvoiceModal(inv);
+      const id = btn.getAttribute('data-mi-toggle');
+      if(VIEW.manualInvoice.expandedId === id){ VIEW.manualInvoice.expandedId = null; renderMain(); return; }
+      if(!MANUAL_INVOICE_TRIPS_CACHE[id]){
+        try{ MANUAL_INVOICE_TRIPS_CACHE[id] = await GoStatementLive.loadManualTripEntries(id); }
+        catch(e){ MANUAL_INVOICE_TRIPS_CACHE[id] = []; }
+      }
+      MANUAL_TRIPS_DRAFT = MANUAL_INVOICE_TRIPS_CACHE[id].map(t=>({ tripDate:t.trip_date, enter:t.enter_time||'', exit:t.exit_time||'', plate:t.plate_no||'', destination:t.destination||'' }));
+      VIEW.manualInvoice.expandedId = id;
+      renderMain();
     });
   });
-  document.querySelectorAll('[data-mi-view-detail]').forEach(btn=>{
-    btn.addEventListener('click', async ()=>{
-      const inv = MANUAL_INVOICES_CACHE.find(x=>x.id===btn.getAttribute('data-mi-view-detail'));
-      if(inv) await openManualInvoiceDetailModal(inv);
-    });
-  });
+
+  // Wire the inline edit panel for whichever invoice is currently expanded.
+  if(VIEW.manualInvoice.expandedId){
+    const inv = MANUAL_INVOICES_CACHE.find(x=>x.id===VIEW.manualInvoice.expandedId);
+    if(inv){
+      document.getElementById('miInlineClose')?.addEventListener('click', ()=>{ VIEW.manualInvoice.expandedId = null; renderMain(); });
+      document.querySelectorAll('.mi-inline-trip-date').forEach(i=> i.addEventListener('input', ()=>{ MANUAL_TRIPS_DRAFT[+i.dataset.idx].tripDate = i.value; }));
+      document.querySelectorAll('.mi-inline-trip-enter').forEach(i=> i.addEventListener('input', ()=>{ MANUAL_TRIPS_DRAFT[+i.dataset.idx].enter = i.value; }));
+      document.querySelectorAll('.mi-inline-trip-exit').forEach(i=> i.addEventListener('input', ()=>{ MANUAL_TRIPS_DRAFT[+i.dataset.idx].exit = i.value; }));
+      document.querySelectorAll('.mi-inline-trip-plate').forEach(i=> i.addEventListener('input', ()=>{ MANUAL_TRIPS_DRAFT[+i.dataset.idx].plate = i.value; }));
+      document.querySelectorAll('.mi-inline-trip-dest').forEach(i=> i.addEventListener('input', ()=>{ MANUAL_TRIPS_DRAFT[+i.dataset.idx].destination = i.value; }));
+      document.querySelectorAll('[data-remove-inline-trip]').forEach(b=> b.addEventListener('click', ()=>{ MANUAL_TRIPS_DRAFT.splice(+b.getAttribute('data-remove-inline-trip'),1); renderMain(); }));
+      const addTripBtn = document.getElementById('btnInlineAddTripRow');
+      if(addTripBtn) addTripBtn.addEventListener('click', ()=>{ MANUAL_TRIPS_DRAFT.push({tripDate:'', enter:'', exit:'', plate:'', destination:''}); renderMain(); });
+      const rateInput = document.getElementById('miInlineRate');
+      const qtyInput = document.getElementById('miInlineQty');
+      const amountPreview = document.getElementById('miInlineAmountPreview');
+      function refreshInlineAmount(){
+        const r = parseFloat(rateInput.value)||0;
+        const q = MANUAL_TRIPS_DRAFT.length || (parseFloat(qtyInput.value)||0);
+        amountPreview.textContent = 'RM ' + (r*q).toFixed(2);
+      }
+      rateInput?.addEventListener('input', refreshInlineAmount);
+      qtyInput?.addEventListener('input', refreshInlineAmount);
+      document.getElementById('miInlineSave')?.addEventListener('click', async ()=>{
+        const op = STATE.operators.find(o=>o.id===inv.operator_id);
+        const rate = parseFloat(rateInput.value)||0;
+        const quantity = MANUAL_TRIPS_DRAFT.length || (parseInt(qtyInput.value)||0);
+        const amount = +(rate*quantity).toFixed(2);
+        const rounding = Number(inv.rounding)||0;
+        const billToName = document.getElementById('miInlineBillName').value.trim() || (op?op.company:'');
+        const billToAddress = document.getElementById('miInlineBillAddr').value.trim();
+        try{
+          const saved = await GoStatementLive.saveManualInvoice({
+            id: inv.id, terminalId: inv.terminal_id, operatorId: inv.operator_id, invoiceNo: inv.invoice_no,
+            invoiceDate: inv.invoice_date, periodFrom: inv.period_from, periodTo: inv.period_to,
+            rate, quantity, amount, rounding, grandTotal: amount + rounding,
+            billToName, billToAddress, status: inv.status
+          });
+          const tripsPayload = MANUAL_TRIPS_DRAFT.filter(t=>t.tripDate).map((t,i)=>({ tripNo:i+1, tripDate:t.tripDate, enter:t.enter, exit:t.exit, plate:t.plate, destination:t.destination }));
+          await GoStatementLive.saveManualTripEntries(saved.id, tripsPayload);
+          MANUAL_INVOICE_TRIPS_CACHE[inv.id] = tripsPayload.map(t=>({ trip_date:t.tripDate, enter_time:t.enter, exit_time:t.exit, plate_no:t.plate, destination:t.destination }));
+          toast('Saved.');
+          await loadManualInvoicesForView();
+        }catch(err){ toast('Save failed: ' + err.message); }
+      });
+    }
+  }
+
   document.querySelectorAll('[data-mi-download-invoice]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const inv = MANUAL_INVOICES_CACHE.find(x=>x.id===btn.getAttribute('data-mi-download-invoice'));
