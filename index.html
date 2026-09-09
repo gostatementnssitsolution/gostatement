@@ -3353,6 +3353,7 @@ function adminManualInvoiceHtml(){
                 <td style="text-align:right;">
                   <div style="display:flex; gap:6px; justify-content:flex-end; flex-wrap:wrap;">
                     <button class="btn btn-sm" data-mi-edit="${inv.id}">Edit</button>
+                    <button class="btn btn-sm" data-mi-view-detail="${inv.id}">View Details</button>
                     <button class="btn btn-sm" data-mi-download-invoice="${inv.id}">Invoice PDF</button>
                     <button class="btn btn-sm" data-mi-download-triplist="${inv.id}">Trip List PDF</button>
                     <button class="btn btn-sm" data-mi-toggle-status="${inv.id}">${inv.status==='finalized'?'Reopen':'Finalize'}</button>
@@ -3396,6 +3397,7 @@ function operatorManualInvoiceHtml(op){
                 <td><span class="pill ${inv.status==='finalized'?'pill-good':'pill-neutral'}">${inv.status==='finalized'?'Finalized':'Draft'}</span></td>
                 <td style="text-align:right;">
                   <div style="display:flex; gap:6px; justify-content:flex-end;">
+                    <button class="btn btn-sm" data-mi-op-view-detail="${inv.id}">View Details</button>
                     <button class="btn btn-sm" data-mi-op-download-invoice="${inv.id}">Invoice PDF</button>
                     <button class="btn btn-sm" data-mi-op-download-triplist="${inv.id}">Trip List PDF</button>
                   </div>
@@ -3431,6 +3433,64 @@ async function downloadManualTripListPdf(inv){
   const rows = trips.map((t2,i)=>({ no:i+1, dateLabel: fmtSlashDate(t2.trip_date, false), enter:t2.enter_time, exit:t2.exit_time, plate:t2.plate_no, destination:t2.destination }));
   const bytes = buildManualTripListPdf(title, t.tripSubtitle, rows);
   await saveViaDownloads(bytes, `manual-trip-list-${inv.invoice_no.replace(/\//g,'-')}.pdf`);
+}
+
+// In-app read-only view of an invoice's trip breakdown — no PDF download
+// needed, so both admin and operator can quickly see exactly which bus
+// (plate no) and trip triggered each TOS Pick Up Charge line.
+async function openManualInvoiceDetailModal(inv){
+  openModal(`<h3>${esc(inv.invoice_no)}</h3><span class="sub">Loading trip details…</span>`);
+  let trips = [];
+  try{ trips = await GoStatementLive.loadManualTripEntries(inv.id); }
+  catch(err){ /* show whatever we have below */ }
+
+  const opName = inv.operators ? inv.operators.company : '';
+  const termCode = inv.terminals ? inv.terminals.code : '';
+  const termName = (INVOICE_TERMINAL_LABEL[termCode] || {}).name || termCode;
+
+  const summaryHtml = `
+    <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;">
+      <span class="pill pill-${termCode.toLowerCase()}">${esc(termName)}</span>
+      <span class="pill ${inv.status==='finalized'?'pill-good':'pill-neutral'}">${inv.status==='finalized'?'Finalized':'Draft'}</span>
+    </div>
+    <div class="scrollx" style="margin-bottom:14px;">
+      <table>
+        <tbody>
+          <tr><td style="text-align:left; color:var(--ink-faint);">Bill To</td><td style="text-align:left; font-weight:700;">${esc(inv.bill_to_name || opName)}</td></tr>
+          <tr><td style="text-align:left; color:var(--ink-faint);">Period</td><td style="text-align:left;">${fmtDate(inv.period_from)} – ${fmtDate(inv.period_to)}</td></tr>
+          <tr><td style="text-align:left; color:var(--ink-faint);">Rate × Quantity</td><td style="text-align:left;">${Number(inv.rate).toFixed(2)} × ${inv.quantity} trip(s)</td></tr>
+          <tr><td style="text-align:left; color:var(--ink-faint); font-weight:700;">Grand Total</td><td style="text-align:left; font-weight:700;">${fmtMoney(inv.grand_total)}</td></tr>
+        </tbody>
+      </table>
+    </div>`;
+
+  const tripsHtml = trips.length ? `
+    <div class="eyebrow" style="margin-bottom:6px;">Trip-by-trip breakdown (${trips.length})</div>
+    <div class="scrollx" style="max-height:340px; overflow-y:auto;">
+      <table>
+        <thead><tr><th>No</th><th style="text-align:left;">Date</th><th style="text-align:left;">Enter Time</th><th style="text-align:left;">Exit Time</th><th style="text-align:left;">Plate No</th><th style="text-align:left;">Destination</th></tr></thead>
+        <tbody>
+          ${trips.map((t,i)=>`
+            <tr>
+              <td>${i+1}</td>
+              <td style="text-align:left;">${fmtSlashDate(t.trip_date, false)}</td>
+              <td style="text-align:left;">${esc(t.enter_time||'')}</td>
+              <td style="text-align:left;">${esc(t.exit_time||'')}</td>
+              <td style="text-align:left; font-weight:700;">${esc(t.plate_no||'')}</td>
+              <td style="text-align:left;">${esc(t.destination||'')}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>` : `<div style="font-size:12.5px; color:var(--ink-faint); padding:10px 0;">No individual trip rows were recorded for this invoice — the quantity (${inv.quantity}) was keyed in directly.</div>`;
+
+  openModal(`
+    <h3>${esc(inv.invoice_no)} — ${esc(opName)}</h3>
+    <span class="sub">Manual Trip List detail — no download needed to review</span>
+    ${summaryHtml}
+    ${tripsHtml}
+    <div class="modal-actions"><button class="btn btn-primary" id="miDetailClose">Close</button></div>
+  `);
+  document.getElementById('miDetailClose').addEventListener('click', closeModal);
 }
 
 async function openManualInvoiceModal(existingInvoice){
@@ -3546,6 +3606,12 @@ function wireManualInvoice(actor, effectiveOp){
   if(VIEW.route !== 'manualinvoice') return;
 
   if(effectiveOp){
+    document.querySelectorAll('[data-mi-op-view-detail]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const inv = MANUAL_INVOICES_CACHE.find(x=>x.id===btn.getAttribute('data-mi-op-view-detail'));
+        if(inv) await openManualInvoiceDetailModal(inv);
+      });
+    });
     document.querySelectorAll('[data-mi-op-download-invoice]').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
         const inv = MANUAL_INVOICES_CACHE.find(x=>x.id===btn.getAttribute('data-mi-op-download-invoice'));
@@ -3635,6 +3701,12 @@ function wireManualInvoice(actor, effectiveOp){
     btn.addEventListener('click', async ()=>{
       const inv = MANUAL_INVOICES_CACHE.find(x=>x.id===btn.getAttribute('data-mi-edit'));
       if(inv) await openManualInvoiceModal(inv);
+    });
+  });
+  document.querySelectorAll('[data-mi-view-detail]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const inv = MANUAL_INVOICES_CACHE.find(x=>x.id===btn.getAttribute('data-mi-view-detail'));
+      if(inv) await openManualInvoiceDetailModal(inv);
     });
   });
   document.querySelectorAll('[data-mi-download-invoice]').forEach(btn=>{
