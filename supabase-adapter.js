@@ -235,15 +235,100 @@
     if (error) throw error;
   }
 
+  /* ---------------- Manual invoice + manual trip list ---------------- */
+
+  // filters: { terminalId, operatorId, periodFrom, periodTo }
+  async function loadManualInvoices(filters = {}) {
+    let q = db
+      .from("manual_invoices")
+      .select("*, terminals(code, name), operators(company, email, invoice_seq)")
+      .order("period_to", { ascending: false });
+    if (filters.terminalId) q = q.eq("terminal_id", filters.terminalId);
+    if (filters.operatorId) q = q.eq("operator_id", filters.operatorId);
+    if (filters.periodFrom) q = q.eq("period_from", filters.periodFrom);
+    if (filters.periodTo) q = q.eq("period_to", filters.periodTo);
+    const { data, error } = await q;
+    if (error) throw error;
+    return data;
+  }
+
+  async function loadManualTripEntries(invoiceId) {
+    const { data, error } = await db
+      .from("manual_trip_entries")
+      .select("*")
+      .eq("invoice_id", invoiceId)
+      .order("trip_no");
+    if (error) throw error;
+    return data;
+  }
+
+  // row: { id?, terminalId, operatorId, invoiceNo, invoiceDate, periodFrom, periodTo,
+  //        rate, quantity, amount, rounding, grandTotal, status }
+  async function saveManualInvoice(row) {
+    const { data: { user } } = await db.auth.getUser();
+    const payload = {
+      id: row.id || undefined,
+      terminal_id: row.terminalId,
+      operator_id: row.operatorId,
+      invoice_no: row.invoiceNo,
+      invoice_date: row.invoiceDate,
+      period_from: row.periodFrom,
+      period_to: row.periodTo,
+      rate: Number(row.rate || 0),
+      quantity: Number(row.quantity || 0),
+      amount: Number(row.amount || 0),
+      rounding: Number(row.rounding || 0),
+      grand_total: Number(row.grandTotal || 0),
+      bill_to_name: row.billToName || null,
+      bill_to_address: row.billToAddress || null,
+      status: row.status || "draft",
+      updated_by: user ? user.id : null
+    };
+    if (!row.id) payload.created_by = user ? user.id : null;
+    const { data, error } = await db
+      .from("manual_invoices")
+      .upsert(payload, { onConflict: "terminal_id,operator_id,period_from,period_to" })
+      .select().single();
+    if (error) throw error;
+    return data;
+  }
+
+  // trips: [{ tripNo, tripDate, enter, exit, plate, destination }]
+  async function saveManualTripEntries(invoiceId, trips) {
+    const { error: delErr } = await db.from("manual_trip_entries").delete().eq("invoice_id", invoiceId);
+    if (delErr) throw delErr;
+    if (!trips.length) return [];
+    const payload = trips.map(t => ({
+      invoice_id: invoiceId,
+      trip_no: t.tripNo,
+      trip_date: t.tripDate,
+      enter_time: t.enter || null,
+      exit_time: t.exit || null,
+      plate_no: t.plate || null,
+      destination: t.destination || null
+    }));
+    const { data, error } = await db.from("manual_trip_entries").insert(payload).select();
+    if (error) throw error;
+    return data;
+  }
+
+  async function deleteManualInvoice(id) {
+    const { error } = await db.from("manual_invoices").delete().eq("id", id);
+    if (error) throw error;
+  }
+
   /* ---------------- Realtime ---------------- */
 
-  // onChange(payload) fires on every INSERT/UPDATE/DELETE to settlement_entries
-  // or operators — call this once after login and re-render/reload from it.
+  // onChange(payload) fires on every INSERT/UPDATE/DELETE to settlement_entries,
+  // operators, manual_invoices or manual_trip_entries — call this once after
+  // login and re-render/reload from it.
   function subscribeToChanges(onChange) {
     return db
       .channel("gostatement-live")
       .on("postgres_changes", { event: "*", schema: "public", table: "settlement_entries" }, onChange)
       .on("postgres_changes", { event: "*", schema: "public", table: "operators" }, onChange)
+      .on("postgres_changes", { event: "*", schema: "public", table: "manual_invoices" }, onChange)
+      .on("postgres_changes", { event: "*", schema: "public", table: "manual_trip_entries" }, onChange)
       .subscribe();
   }
 
@@ -262,6 +347,8 @@
     listAdmins, inviteAdmin, setAdminActive,
     // entries
     loadEntries, getEntry, saveEntry, setEntryStatus, bulkSetStatus, deleteEntry,
+    // manual invoice + trip list
+    loadManualInvoices, loadManualTripEntries, saveManualInvoice, saveManualTripEntries, deleteManualInvoice,
     // realtime
     subscribeToChanges, unsubscribe
   };

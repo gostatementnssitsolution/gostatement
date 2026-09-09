@@ -631,8 +631,8 @@ async function cloudLoadAll(){
       const code = o.terminals ? o.terminals.code : null;
       if(!code) continue;
       const existing = STATE.operators.find(x => x.terminal === code && x.company === o.company);
-      if(existing){ existing.id = o.id; existing.email = o.email; existing.active = o.active !== false; }
-      else STATE.operators.push({ id: o.id, terminal: code, company: o.company, email: o.email, passwordHash: null, mustChange:false, active: o.active !== false });
+      if(existing){ existing.id = o.id; existing.email = o.email; existing.active = o.active !== false; existing.invoiceSeq = o.invoice_seq; existing.defaultTosRate = Number(o.default_tos_rate)||10; }
+      else STATE.operators.push({ id: o.id, terminal: code, company: o.company, email: o.email, passwordHash: null, mustChange:false, active: o.active !== false, invoiceSeq: o.invoice_seq, defaultTosRate: Number(o.default_tos_rate)||10 });
     }
 
     const entries = await GoStatementLive.loadEntries();
@@ -702,6 +702,7 @@ const VIEW = {
   reconcileSearch: '',
   sortDir: 'desc',
   entryForm: { terminal:'KT', operatorId:null, date:null },
+  manualInvoice: { terminal:'KT', period: new Date().toISOString().slice(0,7), operatorId:null },
 };
 
 /* ============================================================
@@ -892,6 +893,118 @@ async function parseSettlementWorkbook(arrayBuffer){
 }
 
 /* ============================================================
+   MANUAL TRIP LIST — Excel import (per-operator trip rows, used
+   to auto-generate Manual Invoices + the printable Manual Trip
+   List PDF). Looks for a sheet named like "List (company)" with
+   columns NO / Date / Enter Time / Exit Time / Operator Name /
+   Plate No / Destination, in any column order.
+   ============================================================ */
+function excelTimeFractionToLabel(v){
+  if(v == null || v === '') return '';
+  if(typeof v === 'number'){
+    const totalMin = Math.round(v*24*60);
+    let h = Math.floor(totalMin/60) % 24, m = totalMin % 60;
+    const ap = h>=12 ? 'PM' : 'AM';
+    let h12 = h % 12; if(h12===0) h12=12;
+    return String(h12).padStart(2,'0')+':'+String(m).padStart(2,'0')+' '+ap;
+  }
+  return String(v).trim();
+}
+async function parseManualTripWorkbook(arrayBuffer){
+  const zip = await unzip(arrayBuffer);
+  const sharedStringsXml = zip.files['xl/sharedStrings.xml'] ? new TextDecoder().decode(await zip.readFile('xl/sharedStrings.xml')) : null;
+  const sharedStrings = sharedStringsXml ? parseSharedStringsXml(sharedStringsXml) : [];
+
+  const wbXml = new TextDecoder().decode(await zip.readFile('xl/workbook.xml'));
+  const wbDoc = new DOMParser().parseFromString(wbXml, 'application/xml');
+  const relsXml = zip.files['xl/_rels/workbook.xml.rels'] ? new TextDecoder().decode(await zip.readFile('xl/_rels/workbook.xml.rels')) : '';
+  const relsDoc = new DOMParser().parseFromString(relsXml || '<x/>', 'application/xml');
+  const relMap = {};
+  Array.from(relsDoc.getElementsByTagName('Relationship')).forEach(r=>{ relMap[r.getAttribute('Id')] = r.getAttribute('Target'); });
+
+  const candidates = [];
+  Array.from(wbDoc.getElementsByTagName('sheet')).forEach(s=>{
+    const name = s.getAttribute('name') || '';
+    const rid = s.getAttribute('r:id');
+    const target = relMap[rid];
+    if(/list/i.test(name) && target) candidates.push({ name, path: 'xl/'+target.replace(/^\.?\//,'') });
+  });
+  candidates.sort((a,b)=> (/company/i.test(b.name)?1:0) - (/company/i.test(a.name)?1:0));
+  if(!candidates.length) throw new Error('No "List" sheet found in this workbook. Expected a sheet like "List (company)".');
+
+  const xml = new TextDecoder().decode(await zip.readFile(candidates[0].path));
+  const rowsMap = parseSheetXml(xml, sharedStrings);
+  const rowIndices = Object.keys(rowsMap).map(Number).sort((a,b)=>a-b);
+
+  let terminalGuess = null;
+  for(const ri of rowIndices.slice(0,3)){
+    for(const v of Object.values(rowsMap[ri])){
+      if(typeof v === 'string'){
+        if(/kuala terengganu/i.test(v)) terminalGuess = 'KT';
+        if(/melaka/i.test(v)) terminalGuess = 'MS';
+      }
+    }
+  }
+
+  let headerRowIdx = null, headerCells = null;
+  for(const ri of rowIndices.slice(0,10)){
+    const cells = rowsMap[ri];
+    const vals = Object.values(cells).filter(v=>typeof v==='string').map(v=>v.trim().toLowerCase());
+    if(vals.includes('operator name') && vals.includes('destination')){ headerRowIdx = ri; headerCells = cells; break; }
+  }
+  if(headerRowIdx === null) throw new Error('Could not find the trip-list header row (expected "Operator Name" and "Destination" columns).');
+
+  const colOf = (label) => {
+    for(const [col,val] of Object.entries(headerCells)){
+      if(typeof val === 'string' && val.trim().toLowerCase() === label) return Number(col);
+    }
+    return null;
+  };
+  const cNo = colOf('no'), cDate = colOf('date'), cEnter = colOf('enter time'), cExit = colOf('exit time'),
+        cOp = colOf('operator name'), cPlate = colOf('plate no'), cDest = colOf('destination');
+  if(cOp === null || cDest === null) throw new Error('Could not map the "Operator Name" / "Destination" columns in this sheet.');
+
+  const groups = {}; // operatorName (as typed in the sheet) -> trips[]
+  for(const ri of rowIndices){
+    if(ri <= headerRowIdx) continue;
+    const cells = rowsMap[ri];
+    const opName = cells[cOp];
+    if(!opName || typeof opName !== 'string') continue;
+    const dateRaw = cells[cDate];
+    if(typeof dateRaw !== 'number') continue; // skip rows without a real date (blank separators etc.)
+    const trip = {
+      no: cNo!=null && cells[cNo]!=null ? Number(cells[cNo]) : null,
+      dateIso: excelSerialToIso(dateRaw),
+      enter: excelTimeFractionToLabel(cells[cEnter]),
+      exit: excelTimeFractionToLabel(cells[cExit]),
+      plate: cPlate!=null && cells[cPlate]!=null ? String(cells[cPlate]).trim() : '',
+      destination: cDest!=null && cells[cDest]!=null ? String(cells[cDest]).trim() : '',
+    };
+    const key = opName.trim();
+    if(!groups[key]) groups[key] = [];
+    groups[key].push(trip);
+  }
+  return { terminal: terminalGuess, groups };
+}
+// Best-effort match of a trip-list "Operator Name" (a different naming
+// convention than our operator directory) to an existing operator company.
+function normalizeOperatorName(s){
+  return String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+}
+function guessOperatorMatch(tripOpName, operatorsInTerminal){
+  const norm = normalizeOperatorName(tripOpName);
+  // exact normalized match first
+  let hit = operatorsInTerminal.find(o => normalizeOperatorName(o.company) === norm);
+  if(hit) return hit;
+  // substring either direction (handles "ADIK BERADIK" vs "ADIK", "707 EKSPRESS" vs "COACH707"-style near-misses)
+  hit = operatorsInTerminal.find(o => {
+    const oNorm = normalizeOperatorName(o.company);
+    return oNorm.length>=3 && (norm.includes(oNorm) || oNorm.includes(norm));
+  });
+  return hit || null;
+}
+
+/* ============================================================
    LOGIN
    ============================================================ */
 function initLoginStats(){ /* intentionally not shown pre-login */ }
@@ -1003,6 +1116,7 @@ const ICONS = {
   entry: icon('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>'),
   admins: icon('<path d="M12 2 4 5v6c0 5 3.4 8.7 8 11 4.6-2.3 8-6 8-11V5Z"/><path d="m9 12 2 2 4-4"/>'),
   reconcile: icon('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>'),
+  invoice: icon('<path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z"/><path d="M14 2v5h5"/><path d="M8 12h4M8 16h8M8 8h2"/>'),
 };
 
 function navItemsFor(actor){
@@ -1013,12 +1127,14 @@ function navItemsFor(actor){
       {route:'ledger', label:'Settlement Ledger', icon:ICONS.ledger},
       {route:'entry', label:'Daily Entry', icon:ICONS.entry},
       {route:'reconcile', label:'Reconciliation', icon:ICONS.reconcile},
+      {route:'manualinvoice', label:'Manual Invoice', icon:ICONS.invoice},
       {route:'admins', label:'Admins', icon:ICONS.admins},
     ];
   }
   return [
     {route:'dashboard', label:'Dashboard', icon:ICONS.dashboard},
     {route:'ledger', label:'Settlement Ledger', icon:ICONS.ledger},
+    {route:'manualinvoice', label:'Manual Invoice', icon:ICONS.invoice},
   ];
 }
 
@@ -1349,6 +1465,10 @@ const PDF_COLOR = {
   brand:[0.035,0.412,0.855], white:[1,1,1], whiteDim:[0.86,0.92,1], black:[0.09,0.1,0.12],
   gray:[0.52,0.55,0.58], grayLabel:[0.6,0.63,0.66], good:[0.102,0.498,0.180], bad:[0.700,0.149,0.169],
   zebra:[0.965,0.972,0.980], border:[0.75,0.77,0.8],
+  // NSS invoice branding (matches the official "NSS IT SOLUTION SDN BHD" invoice template)
+  maroon:[0.616,0.098,0.176], maroonDim:[0.925,0.529,0.573],
+  // Manual Trip List table header (matches the official trip-list template)
+  slate:[0.357,0.420,0.510], slateZebra:[0.925,0.933,0.949],
 };
 class SimplePdf {
   constructor(){
@@ -1468,6 +1588,182 @@ function renderPdfDocument(spec){
     }
     ops += pdfTextCenter(W/2, 28, 'This is a system-generated document from GoStatement. For queries, contact the terminal settlement office.', 'F1', 7.5, PDF_COLOR.gray);
     ops += pdfTextCenter(W/2, 16, `Page ${pageIdx+1} of ${totalPages}`, 'F1', 7.5, PDF_COLOR.gray);
+    pdf.addPage(ops, W, H);
+  });
+  return pdf.build();
+}
+
+/* ============================================================
+   MANUAL INVOICE + MANUAL TRIP LIST — follows the official
+   "NSS IT SOLUTION SDN BHD" invoice template and the terminal's
+   Manual Trip List format, byte-for-byte via the same PDF writer
+   used for settlement statements above.
+   ============================================================ */
+function fmtInvoiceDate(iso){
+  const d = new Date(iso+'T00:00:00');
+  return String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear();
+}
+function fmtSlashDate(iso, twoDigitYear){
+  const d = new Date(iso+'T00:00:00');
+  const yy = twoDigitYear ? String(d.getFullYear()).slice(2) : d.getFullYear();
+  return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+yy;
+}
+function wrapPdfText(text, maxWidth, size, bold){
+  const words = String(text||'').split(/\s+/).filter(Boolean);
+  const lines = []; let cur = '';
+  for(const w of words){
+    const test = cur ? cur+' '+w : w;
+    if(textWidth(test, size, bold) > maxWidth && cur){ lines.push(cur); cur = w; }
+    else cur = test;
+  }
+  if(cur) lines.push(cur);
+  return lines.length ? lines : [''];
+}
+// Fixed per-operator sequence (alphabetical within the terminal) + month gives
+// a stable invoice number: {TERM}TOS{YYYY}/{MM}/{seq} — e.g. KTTOS2026/07/15.
+function buildInvoiceNo(terminalCode, periodTo, invoiceSeq){
+  const d = new Date(periodTo+'T00:00:00');
+  return `${terminalCode}TOS${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(invoiceSeq||0).padStart(2,'0')}`;
+}
+
+function buildManualInvoicePdf(inv){
+  const W=595, H=842, M=40, tableW=W-2*M;
+  const pdf = new SimplePdf();
+  let ops = '';
+
+  ops += pdfRect(0, H-6, W, 6, PDF_COLOR.maroon);
+
+  let y = H-40;
+  ops += pdfRect(M-6, y-28, 42, 26, PDF_COLOR.maroon);
+  ops += pdfTextCenter(M-6+21, y-16, 'NSS', 'F2', 10, PDF_COLOR.white);
+  ops += pdfText(M+46, y, 'NSS IT SOLUTION SDN BHD', 'F2', 15, PDF_COLOR.maroon);
+  ops += pdfText(M+46, y-15, inv.terminalName, 'F1', 9.5, PDF_COLOR.black);
+  ops += pdfText(M+46, y-27, inv.terminalCity+', Malaysia', 'F1', 9, PDF_COLOR.gray);
+  ops += pdfTextRightAt(W-M, y-4, 'INVOICE', 'F2', 22, PDF_COLOR.black);
+
+  y -= 50;
+  ops += pdfRect(M, y, tableW, 4, PDF_COLOR.maroon);
+  y -= 22;
+
+  const rightColX = W-M-175;
+  ops += pdfText(M, y, 'BILL TO', 'F2', 8, PDF_COLOR.maroon);
+  ops += pdfText(rightColX, y, 'Invoice No.', 'F2', 8.5, PDF_COLOR.maroon);
+  ops += pdfTextRightAt(W-M, y, inv.invoiceNo, 'F2', 8.5, PDF_COLOR.black);
+  y -= 14;
+  ops += pdfText(M, y, inv.companyName, 'F2', 11, PDF_COLOR.black);
+  ops += pdfText(rightColX, y, 'Invoice Date', 'F2', 8.5, PDF_COLOR.maroon);
+  ops += pdfTextRightAt(W-M, y, inv.invoiceDate, 'F1', 8.5, PDF_COLOR.black);
+  y -= 13;
+  const addrLines = wrapPdfText(inv.companyAddress, rightColX-M-14, 8.5, false);
+  for(const ln of addrLines){ ops += pdfText(M, y, ln, 'F1', 8.5, PDF_COLOR.gray); y -= 11; }
+  y -= 6;
+  ops += pdfText(rightColX, y, 'Sales Date:', 'F2', 8.5, PDF_COLOR.maroon);
+  ops += pdfTextRightAt(W-M, y, inv.periodLabel, 'F1', 8.5, PDF_COLOR.black);
+
+  y -= 34;
+  const cols = [
+    {label:'No.', w:28, align:'left'},
+    {label:'Description', w:250, align:'left'},
+    {label:'Quantity', w:80, align:'right'},
+    {label:'Rate (RM)', w:80, align:'right'},
+    {label:'Amount (RM)', w: tableW-28-250-80-80, align:'right'},
+  ];
+  ops += pdfRect(M, y-18, tableW, 18, PDF_COLOR.maroon);
+  let cx = M;
+  for(const c of cols){
+    if(c.align==='right') ops += pdfTextRightAt(cx+c.w-6, y-13, c.label, 'F2', 8.5, PDF_COLOR.white);
+    else ops += pdfText(cx+6, y-13, c.label, 'F2', 8.5, PDF_COLOR.white);
+    cx += c.w;
+  }
+  y -= 18;
+  y -= 16;
+  const rowVals = ['1', 'TOS Pick Up Charge', String(inv.quantity), inv.rate.toFixed(2), inv.amount.toFixed(2)];
+  cx = M;
+  rowVals.forEach((v,i)=>{
+    const c = cols[i];
+    if(c.align==='right') ops += pdfTextRightAt(cx+c.w-6, y, v, 'F1', 9, PDF_COLOR.black);
+    else ops += pdfText(cx+6, y, v, 'F1', 9, PDF_COLOR.black);
+    cx += c.w;
+  });
+
+  y -= 12;
+  ops += pdfRect(M, y, tableW, 0.8, PDF_COLOR.border);
+  y -= 24;
+  ops += pdfRect(M, y, tableW, 0.8, PDF_COLOR.border);
+
+  const totalLabelX = M+tableW-220;
+  y -= 16;
+  ops += pdfText(totalLabelX, y, 'Total Amount', 'F1', 9.5, PDF_COLOR.black);
+  ops += pdfTextRightAt(W-M, y, inv.amount.toFixed(2), 'F1', 9.5, PDF_COLOR.black);
+  y -= 15;
+  ops += pdfText(totalLabelX, y, 'Rounding', 'F1', 9.5, PDF_COLOR.black);
+  ops += pdfTextRightAt(W-M, y, 'RM '+inv.rounding.toFixed(2), 'F1', 9.5, PDF_COLOR.black);
+  y -= 22;
+  ops += pdfRect(totalLabelX-6, y-6, (W-M)-(totalLabelX-6), 20, PDF_COLOR.maroon);
+  ops += pdfText(totalLabelX, y, 'Grand Total', 'F2', 10.5, PDF_COLOR.white);
+  ops += pdfTextRightAt(W-M-6, y, 'RM '+inv.grandTotal.toFixed(2), 'F2', 10.5, PDF_COLOR.white);
+
+  y -= 50;
+  ops += pdfText(M, y, 'This is a computer-generated invoice and does not require a signature.', 'F1', 8, PDF_COLOR.gray);
+  y -= 22;
+  ops += pdfText(M, y, 'Remark: Payment via Daily Settlement Deduction.', 'F1', 8.5, PDF_COLOR.gray);
+  y -= 30;
+  ops += pdfText(M, y, 'NSS IT Solution Sdn Bhd', 'F2', 9.5, PDF_COLOR.black);
+  y -= 12;
+  ops += pdfText(M, y, inv.terminalName, 'F1', 8.5, PDF_COLOR.gray);
+
+  pdf.addPage(ops, W, H);
+  return pdf.build();
+}
+
+function buildManualTripListPdf(title, subtitle, trips){
+  const W=595, H=842, M=40, tableW=W-2*M, rowH=16, headerH=20;
+  const cols = [
+    {label:'NO', w:30, align:'center'},
+    {label:'Date', w:75, align:'left'},
+    {label:'Enter Time', w:75, align:'left'},
+    {label:'Exit Time', w:75, align:'left'},
+    {label:'Plate No', w:90, align:'left'},
+    {label:'Destination', w: tableW-30-75-75-75-90, align:'left'},
+  ];
+  const linesPerPage = 34;
+  const pages = [];
+  for(let i=0;i<trips.length;i+=linesPerPage) pages.push(trips.slice(i,i+linesPerPage));
+  if(!pages.length) pages.push([]);
+  const pdf = new SimplePdf();
+  pages.forEach((pageTrips, pageIdx)=>{
+    let ops = '';
+    let y = H-50;
+    if(pageIdx===0){
+      ops += pdfTextCenter(W/2, y, title, 'F2', 14, PDF_COLOR.black);
+      y -= 20;
+      ops += pdfTextCenter(W/2, y, subtitle, 'F1', 10, PDF_COLOR.gray);
+      y -= 26;
+    } else { y -= 10; }
+
+    ops += pdfRect(M, y-headerH+4, tableW, headerH, PDF_COLOR.slate);
+    let cx = M;
+    for(const c of cols){
+      if(c.align==='center') ops += pdfTextCenter(cx+c.w/2, y-headerH+11, c.label, 'F2', 8.5, PDF_COLOR.white);
+      else ops += pdfText(cx+6, y-headerH+11, c.label, 'F2', 8.5, PDF_COLOR.white);
+      cx += c.w;
+    }
+    y -= headerH;
+
+    pageTrips.forEach((t, ri)=>{
+      if(ri%2===1) ops += pdfRect(M, y-rowH+4, tableW, rowH, PDF_COLOR.slateZebra);
+      const vals = [String(t.no), t.dateLabel, t.enter||'', t.exit||'', t.plate||'', t.destination||''];
+      let cx2 = M;
+      vals.forEach((v,ci)=>{
+        const c = cols[ci];
+        if(c.align==='center') ops += pdfTextCenter(cx2+c.w/2, y-rowH+6, v, 'F1', 8.5, PDF_COLOR.black);
+        else ops += pdfText(cx2+6, y-rowH+6, v, 'F1', 8.5, PDF_COLOR.black);
+        cx2 += c.w;
+      });
+      y -= rowH;
+    });
+
+    ops += pdfTextCenter(W/2, 20, `Page ${pageIdx+1} of ${pages.length}`, 'F1', 7.5, PDF_COLOR.gray);
     pdf.addPage(ops, W, H);
   });
   return pdf.build();
@@ -2545,12 +2841,14 @@ function renderMain(){
   if(actor.type === 'operator' || (actor.type==='admin' && VIEW.viewingAsOperatorId)){
     effectiveOp = actor.type==='operator' ? actor.op : findOperatorById(VIEW.viewingAsOperatorId);
     if(VIEW.route === 'ledger') html = operatorLedgerHtml(effectiveOp);
+    else if(VIEW.route === 'manualinvoice') html = operatorManualInvoiceHtml(effectiveOp);
     else html = operatorDashboardHtml(effectiveOp);
   } else {
     if(VIEW.route === 'directory') html = adminDirectoryHtml();
     else if(VIEW.route === 'ledger') html = adminLedgerHtml();
     else if(VIEW.route === 'entry') html = adminEntryHtml();
     else if(VIEW.route === 'reconcile') html = adminReconcileHtml();
+    else if(VIEW.route === 'manualinvoice') html = adminManualInvoiceHtml();
     else if(VIEW.route === 'admins') html = adminUsersHtml();
     else html = adminOverviewHtml();
   }
@@ -2858,6 +3156,436 @@ function wireMain(actor, effectiveOp){
     VIEW.entryForm.terminal = terminal;
     renderMain();
     toast(`Imported ${count} settlement row(s)${created ? ` · ${created} new operator account(s) created` : ''}.`);
+  });
+
+  wireManualInvoice(actor, effectiveOp);
+}
+
+/* ============================================================
+   MANUAL INVOICE + MANUAL TRIP LIST — screens
+   ============================================================ */
+let MANUAL_INVOICES_CACHE = [];
+let MANUAL_INVOICES_LOADED_KEY = null;
+let MANUAL_IMPORT_PREVIEW = null;
+let MANUAL_TRIPS_DRAFT = [];
+
+const INVOICE_TERMINAL_LABEL = {
+  KT: { name:'Terminal Bas Kuala Terengganu', city:'Kuala Terengganu', tripSubtitle:'TERMINAL KUALA TERENGGANU' },
+  MS: { name:'Terminal Bas Melaka Sentral', city:'Melaka', tripSubtitle:'TERMINAL MELAKA SENTRAL' },
+};
+
+function monthRange(period){
+  const [y,m] = period.split('-').map(Number);
+  const from = `${period}-01`;
+  const lastDay = new Date(y, m, 0).getDate();
+  const to = `${period}-${String(lastDay).padStart(2,'0')}`;
+  return { from, to };
+}
+
+async function loadManualInvoicesForView(){
+  if(!window.GoStatementLive) return;
+  const terminalId = TERMINAL_IDS[VIEW.manualInvoice.terminal];
+  if(!terminalId) return;
+  const { from, to } = monthRange(VIEW.manualInvoice.period);
+  const key = terminalId+'|'+from+'|'+to;
+  try{
+    MANUAL_INVOICES_CACHE = await GoStatementLive.loadManualInvoices({ terminalId, periodFrom: from, periodTo: to });
+    MANUAL_INVOICES_LOADED_KEY = key;
+  }catch(err){ console.error('loadManualInvoicesForView failed', err); }
+  if(VIEW.route === 'manualinvoice') renderMain();
+}
+
+function manualImportPreviewHtml(){
+  if(!MANUAL_IMPORT_PREVIEW) return '';
+  const p = MANUAL_IMPORT_PREVIEW;
+  const opsInTerminal = STATE.operators.filter(o=>o.terminal===VIEW.manualInvoice.terminal && o.active!==false);
+  return `
+    <div class="card" style="margin-bottom:14px; padding:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <div><b>Import preview</b> — ${p.groups.length} operator group(s) found${p.terminalGuess?` (detected terminal: ${p.terminalGuess})`:''}</div>
+        <button class="btn btn-sm" id="btn-mi-cancel-import">Cancel</button>
+      </div>
+      <div class="scrollx">
+        <table>
+          <thead><tr><th style="text-align:left;">Sheet operator name</th><th>Trips</th><th style="text-align:left;">Match to operator</th></tr></thead>
+          <tbody>
+            ${p.groups.map((g,i)=>`
+              <tr>
+                <td style="text-align:left;">${esc(g.name)}</td>
+                <td class="num">${g.trips.length}</td>
+                <td style="text-align:left;">
+                  <select data-mi-map="${i}" class="btn btn-sm" style="min-width:220px;">
+                    <option value="">— Skip —</option>
+                    ${opsInTerminal.map(o=>`<option value="${o.id}" ${g.matchedOperatorId===o.id?'selected':''}>${esc(o.company)}</option>`).join('')}
+                  </select>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:12px; display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn btn-primary" id="btn-mi-do-import">Import ${p.groups.filter(g=>g.matchedOperatorId).length} matched invoice(s)</button>
+      </div>
+    </div>
+  `;
+}
+
+function adminManualInvoiceHtml(){
+  const { from, to } = monthRange(VIEW.manualInvoice.period);
+  const terminalId = TERMINAL_IDS[VIEW.manualInvoice.terminal];
+  const key = terminalId+'|'+from+'|'+to;
+  if(terminalId && MANUAL_INVOICES_LOADED_KEY !== key) loadManualInvoicesForView();
+  const loading = !terminalId || MANUAL_INVOICES_LOADED_KEY !== key;
+  const invoices = loading ? [] : MANUAL_INVOICES_CACHE;
+
+  return `
+    <div id="topbar">
+      <div><h1>Manual Invoice &amp; Trip List</h1><div class="desc">TOS Pick Up Charge — per-operator manual invoicing</div></div>
+      <div class="topbar-actions">
+        <select id="miTerminalSel" class="btn btn-sm">
+          <option value="KT" ${VIEW.manualInvoice.terminal==='KT'?'selected':''}>Kuala Terengganu Bus Terminal</option>
+          <option value="MS" ${VIEW.manualInvoice.terminal==='MS'?'selected':''}>Melaka Sentral</option>
+        </select>
+        <input type="month" id="miPeriodSel" class="btn btn-sm" value="${VIEW.manualInvoice.period}">
+        <label class="btn btn-sm" style="cursor:pointer;">Upload Excel<input type="file" id="miUploadFile" accept=".xlsx" style="display:none;"></label>
+        <button class="btn btn-accent btn-sm" id="btn-mi-add">+ Add Manual Invoice</button>
+      </div>
+    </div>
+    <div id="miImportPreviewWrap">${MANUAL_IMPORT_PREVIEW ? manualImportPreviewHtml() : ''}</div>
+    <div class="card table-card">
+      <div class="table-toolbar"><span style="font-size:12.5px; color:var(--ink-faint);">${loading?'Loading…':invoices.length+' invoice(s) for '+fmtDate(from)+' – '+fmtDate(to)}</span></div>
+      <div class="scrollx">
+        <table>
+          <thead><tr><th style="text-align:left;">Operator</th><th>Invoice No.</th><th>Qty</th><th>Rate</th><th>Grand Total</th><th>Status</th><th style="text-align:right;">Actions</th></tr></thead>
+          <tbody>
+            ${invoices.map(inv=>`
+              <tr>
+                <td style="text-align:left;">${esc(inv.operators?inv.operators.company:'')}</td>
+                <td>${esc(inv.invoice_no)}</td>
+                <td class="num">${inv.quantity}</td>
+                <td class="num">${Number(inv.rate).toFixed(2)}</td>
+                <td class="num" style="font-weight:700;">${fmtMoney(inv.grand_total)}</td>
+                <td><span class="pill ${inv.status==='finalized'?'pill-good':'pill-neutral'}">${inv.status==='finalized'?'Finalized':'Draft'}</span></td>
+                <td style="text-align:right;">
+                  <div style="display:flex; gap:6px; justify-content:flex-end; flex-wrap:wrap;">
+                    <button class="btn btn-sm" data-mi-edit="${inv.id}">Edit</button>
+                    <button class="btn btn-sm" data-mi-download-invoice="${inv.id}">Invoice PDF</button>
+                    <button class="btn btn-sm" data-mi-download-triplist="${inv.id}">Trip List PDF</button>
+                    <button class="btn btn-sm" data-mi-toggle-status="${inv.id}">${inv.status==='finalized'?'Reopen':'Finalize'}</button>
+                    <button class="btn btn-sm btn-danger" data-mi-delete="${inv.id}">Delete</button>
+                  </div>
+                </td>
+              </tr>`).join('') || `<tr><td colspan="7" style="text-align:center; color:var(--ink-faint); padding:20px;">${loading?'Loading…':'No manual invoices for this terminal/period yet. Upload an Excel trip list or add one manually.'}</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function operatorManualInvoiceHtml(op){
+  const key = 'op|'+op.id;
+  if(MANUAL_INVOICES_LOADED_KEY !== key){
+    (async ()=>{
+      try{ MANUAL_INVOICES_CACHE = await GoStatementLive.loadManualInvoices({ operatorId: op.id }); MANUAL_INVOICES_LOADED_KEY = key; }
+      catch(err){ console.error('load operator manual invoices failed', err); }
+      if(VIEW.route==='manualinvoice') renderMain();
+    })();
+  }
+  const loading = MANUAL_INVOICES_LOADED_KEY !== key;
+  const invoices = loading ? [] : MANUAL_INVOICES_CACHE;
+  return `
+    <div id="topbar">
+      <div><h1>Manual Invoice</h1><div class="desc">TOS Pick Up Charge statements for ${esc(op.company)}</div></div>
+    </div>
+    <div class="card table-card">
+      <div class="scrollx">
+        <table>
+          <thead><tr><th style="text-align:left;">Period</th><th>Invoice No.</th><th>Qty</th><th>Grand Total</th><th>Status</th><th style="text-align:right;">Download</th></tr></thead>
+          <tbody>
+            ${invoices.map(inv=>`
+              <tr>
+                <td style="text-align:left;">${fmtDate(inv.period_from)} – ${fmtDate(inv.period_to)}</td>
+                <td>${esc(inv.invoice_no)}</td>
+                <td class="num">${inv.quantity}</td>
+                <td class="num" style="font-weight:700;">${fmtMoney(inv.grand_total)}</td>
+                <td><span class="pill ${inv.status==='finalized'?'pill-good':'pill-neutral'}">${inv.status==='finalized'?'Finalized':'Draft'}</span></td>
+                <td style="text-align:right;">
+                  <div style="display:flex; gap:6px; justify-content:flex-end;">
+                    <button class="btn btn-sm" data-mi-op-download-invoice="${inv.id}">Invoice PDF</button>
+                    <button class="btn btn-sm" data-mi-op-download-triplist="${inv.id}">Trip List PDF</button>
+                  </div>
+                </td>
+              </tr>`).join('') || `<tr><td colspan="6" style="text-align:center; color:var(--ink-faint); padding:20px;">${loading?'Loading…':'No manual invoices yet.'}</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+async function downloadManualInvoicePdf(inv){
+  const t = INVOICE_TERMINAL_LABEL[inv.terminals?inv.terminals.code:'KT'] || INVOICE_TERMINAL_LABEL.KT;
+  const bytes = buildManualInvoicePdf({
+    terminalName: t.name, terminalCity: t.city,
+    invoiceNo: inv.invoice_no, invoiceDate: fmtInvoiceDate(inv.invoice_date),
+    companyName: inv.bill_to_name || (inv.operators?inv.operators.company:''), companyAddress: inv.bill_to_address || '',
+    periodLabel: fmtSlashDate(inv.period_from, true) + ' - ' + fmtSlashDate(inv.period_to, true),
+    quantity: inv.quantity, rate: Number(inv.rate), amount: Number(inv.amount), rounding: Number(inv.rounding), grandTotal: Number(inv.grand_total)
+  });
+  await saveViaDownloads(bytes, `${inv.invoice_no.replace(/\//g,'-')}.pdf`);
+}
+async function downloadManualTripListPdf(inv){
+  let trips = [];
+  try{ trips = await GoStatementLive.loadManualTripEntries(inv.id); }catch(e){ /* ignore */ }
+  if(!trips.length){ toast('No trip rows recorded for this invoice.'); return; }
+  const code = inv.terminals ? inv.terminals.code : 'KT';
+  const t = INVOICE_TERMINAL_LABEL[code] || INVOICE_TERMINAL_LABEL.KT;
+  const monthYear = new Date(inv.period_to+'T00:00:00').toLocaleDateString('en-MY',{month:'long', year:'numeric'}).toUpperCase();
+  const opName = (inv.operators ? inv.operators.company : '').toUpperCase();
+  const title = `MANUAL TRIP LIST ${code} ${monthYear} - ${opName}`;
+  const rows = trips.map((t2,i)=>({ no:i+1, dateLabel: fmtSlashDate(t2.trip_date, false), enter:t2.enter_time, exit:t2.exit_time, plate:t2.plate_no, destination:t2.destination }));
+  const bytes = buildManualTripListPdf(title, t.tripSubtitle, rows);
+  await saveViaDownloads(bytes, `manual-trip-list-${inv.invoice_no.replace(/\//g,'-')}.pdf`);
+}
+
+async function openManualInvoiceModal(existingInvoice){
+  const opsInTerminal = STATE.operators.filter(o=>o.terminal===VIEW.manualInvoice.terminal && o.active!==false).sort((a,b)=>a.company.localeCompare(b.company));
+  if(!opsInTerminal.length){ toast('No operators found for this terminal.'); return; }
+  let trips = [];
+  if(existingInvoice){
+    try{
+      const raw = await GoStatementLive.loadManualTripEntries(existingInvoice.id);
+      trips = raw.map(t=>({ tripDate:t.trip_date, enter:t.enter_time||'', exit:t.exit_time||'', plate:t.plate_no||'', destination:t.destination||'' }));
+    }catch(e){ trips = []; }
+  }
+  MANUAL_TRIPS_DRAFT = trips;
+  const { from, to } = monthRange(VIEW.manualInvoice.period);
+  let selectedOpId = existingInvoice ? existingInvoice.operator_id : opsInTerminal[0].id;
+
+  function modalHtml(){
+    const op = opsInTerminal.find(o=>o.id===selectedOpId) || opsInTerminal[0];
+    const rate = existingInvoice ? Number(existingInvoice.rate) : (op ? op.defaultTosRate : 10);
+    const qty = MANUAL_TRIPS_DRAFT.length || (existingInvoice ? existingInvoice.quantity : 0);
+    const amount = +(qty*rate).toFixed(2);
+    return `
+      <h3>${existingInvoice?'Edit':'Add'} Manual Invoice</h3>
+      <span class="sub">TOS Pick Up Charge — ${fmtDate(from)} – ${fmtDate(to)}</span>
+      <form id="miForm">
+        <div class="field"><label>Operator</label>
+          <select id="miOpSel" ${existingInvoice?'disabled':''}>
+            ${opsInTerminal.map(o=>`<option value="${o.id}" ${o.id===selectedOpId?'selected':''}>${esc(o.company)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Bill-to company name</label><input type="text" id="miBillName" value="${esc(existingInvoice?(existingInvoice.bill_to_name||''):(op?op.company:''))}"></div>
+        <div class="field"><label>Bill-to address</label><textarea id="miBillAddr" rows="2">${esc(existingInvoice?(existingInvoice.bill_to_address||''):'')}</textarea></div>
+        <div class="field"><label>Rate (RM per trip)</label><input type="number" step="0.01" id="miRate" value="${rate}"></div>
+        <div class="field">
+          <label>Trip rows (${MANUAL_TRIPS_DRAFT.length}) — quantity is derived from these rows when present</label>
+          <div id="miTripsList" style="display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto;">
+            ${MANUAL_TRIPS_DRAFT.map((t,i)=>`
+              <div style="display:flex; gap:6px;">
+                <input type="date" class="mi-trip-date" data-idx="${i}" value="${t.tripDate||''}" style="flex:1.2; padding:6px;">
+                <input type="text" class="mi-trip-enter" data-idx="${i}" value="${esc(t.enter||'')}" placeholder="Enter time" style="flex:1; padding:6px;">
+                <input type="text" class="mi-trip-exit" data-idx="${i}" value="${esc(t.exit||'')}" placeholder="Exit time" style="flex:1; padding:6px;">
+                <input type="text" class="mi-trip-plate" data-idx="${i}" value="${esc(t.plate||'')}" placeholder="Plate no" style="flex:1; padding:6px;">
+                <input type="text" class="mi-trip-dest" data-idx="${i}" value="${esc(t.destination||'')}" placeholder="Destination" style="flex:1.4; padding:6px;">
+                <button type="button" class="btn btn-sm" data-remove-trip="${i}">✕</button>
+              </div>`).join('') || '<div style="font-size:12.5px; color:var(--ink-faint);">No trip rows — quantity below will be used instead.</div>'}
+          </div>
+          <button type="button" class="btn btn-sm" id="btnAddTripRow" style="margin-top:6px; align-self:flex-start;">+ Add trip row</button>
+        </div>
+        <div class="field"><label>Quantity ${MANUAL_TRIPS_DRAFT.length?'(auto from trip rows above)':'(no trip rows — key in directly)'}</label><input type="number" id="miQty" value="${qty}" ${MANUAL_TRIPS_DRAFT.length?'readonly':''}></div>
+        <div style="display:flex; justify-content:space-between; padding:8px 0; font-weight:700;"><span>Amount</span><span id="miAmountPreview">RM ${amount.toFixed(2)}</span></div>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="miCancel">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    `;
+  }
+
+  function render(){ openModal(modalHtml()); wire(); }
+  function wire(){
+    document.getElementById('miCancel').addEventListener('click', closeModal);
+    const opSel = document.getElementById('miOpSel');
+    if(opSel) opSel.addEventListener('change', ()=>{ selectedOpId = opSel.value; render(); });
+    document.getElementById('btnAddTripRow').addEventListener('click', ()=>{ MANUAL_TRIPS_DRAFT.push({tripDate:'', enter:'', exit:'', plate:'', destination:''}); render(); });
+    document.querySelectorAll('[data-remove-trip]').forEach(b=> b.addEventListener('click', ()=>{ MANUAL_TRIPS_DRAFT.splice(+b.getAttribute('data-remove-trip'),1); render(); }));
+    document.querySelectorAll('.mi-trip-date').forEach(i=> i.addEventListener('input', ()=>{ MANUAL_TRIPS_DRAFT[+i.dataset.idx].tripDate = i.value; }));
+    document.querySelectorAll('.mi-trip-enter').forEach(i=> i.addEventListener('input', ()=>{ MANUAL_TRIPS_DRAFT[+i.dataset.idx].enter = i.value; }));
+    document.querySelectorAll('.mi-trip-exit').forEach(i=> i.addEventListener('input', ()=>{ MANUAL_TRIPS_DRAFT[+i.dataset.idx].exit = i.value; }));
+    document.querySelectorAll('.mi-trip-plate').forEach(i=> i.addEventListener('input', ()=>{ MANUAL_TRIPS_DRAFT[+i.dataset.idx].plate = i.value; }));
+    document.querySelectorAll('.mi-trip-dest').forEach(i=> i.addEventListener('input', ()=>{ MANUAL_TRIPS_DRAFT[+i.dataset.idx].destination = i.value; }));
+    const rateInput = document.getElementById('miRate');
+    const qtyInput = document.getElementById('miQty');
+    const amountPreview = document.getElementById('miAmountPreview');
+    function refreshAmount(){
+      const r = parseFloat(rateInput.value)||0;
+      const q = MANUAL_TRIPS_DRAFT.length || (parseFloat(qtyInput.value)||0);
+      amountPreview.textContent = 'RM ' + (r*q).toFixed(2);
+    }
+    rateInput.addEventListener('input', refreshAmount);
+    qtyInput.addEventListener('input', refreshAmount);
+
+    document.getElementById('miForm').addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const opId = existingInvoice ? existingInvoice.operator_id : document.getElementById('miOpSel').value;
+      const op = STATE.operators.find(o=>o.id===opId);
+      if(!op){ toast('Select an operator.'); return; }
+      const rate = parseFloat(rateInput.value)||0;
+      const quantity = MANUAL_TRIPS_DRAFT.length || (parseInt(qtyInput.value)||0);
+      const amount = +(rate*quantity).toFixed(2);
+      const billToName = document.getElementById('miBillName').value.trim() || op.company;
+      const billToAddress = document.getElementById('miBillAddr').value.trim();
+      const terminalId = TERMINAL_IDS[VIEW.manualInvoice.terminal];
+      const invoiceNo = existingInvoice ? existingInvoice.invoice_no : buildInvoiceNo(VIEW.manualInvoice.terminal, to, op.invoiceSeq);
+      try{
+        const saved = await GoStatementLive.saveManualInvoice({
+          id: existingInvoice?existingInvoice.id:undefined,
+          terminalId, operatorId: op.id, invoiceNo, invoiceDate: to,
+          periodFrom: from, periodTo: to, rate, quantity, amount, rounding:0, grandTotal: amount,
+          billToName, billToAddress, status: existingInvoice?existingInvoice.status:'draft'
+        });
+        const tripsPayload = MANUAL_TRIPS_DRAFT.filter(t=>t.tripDate).map((t,i)=>({ tripNo:i+1, tripDate:t.tripDate, enter:t.enter, exit:t.exit, plate:t.plate, destination:t.destination }));
+        await GoStatementLive.saveManualTripEntries(saved.id, tripsPayload);
+        closeModal();
+        toast('Manual invoice saved.');
+        await loadManualInvoicesForView();
+      }catch(err){ toast('Save failed: ' + err.message); }
+    });
+  }
+  render();
+}
+
+function wireManualInvoice(actor, effectiveOp){
+  if(VIEW.route !== 'manualinvoice') return;
+
+  if(effectiveOp){
+    document.querySelectorAll('[data-mi-op-download-invoice]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const inv = MANUAL_INVOICES_CACHE.find(x=>x.id===btn.getAttribute('data-mi-op-download-invoice'));
+        if(inv) await downloadManualInvoicePdf(inv);
+      });
+    });
+    document.querySelectorAll('[data-mi-op-download-triplist]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const inv = MANUAL_INVOICES_CACHE.find(x=>x.id===btn.getAttribute('data-mi-op-download-triplist'));
+        if(inv) await downloadManualTripListPdf(inv);
+      });
+    });
+    return;
+  }
+
+  const terminalSel = document.getElementById('miTerminalSel');
+  if(terminalSel) terminalSel.addEventListener('change', ()=>{ VIEW.manualInvoice.terminal = terminalSel.value; MANUAL_IMPORT_PREVIEW=null; MANUAL_INVOICES_LOADED_KEY=null; renderMain(); });
+  const periodSel = document.getElementById('miPeriodSel');
+  if(periodSel) periodSel.addEventListener('change', ()=>{ VIEW.manualInvoice.period = periodSel.value; MANUAL_IMPORT_PREVIEW=null; MANUAL_INVOICES_LOADED_KEY=null; renderMain(); });
+
+  const uploadFile = document.getElementById('miUploadFile');
+  if(uploadFile) uploadFile.addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    try{
+      const buf = await file.arrayBuffer();
+      const parsed = await parseManualTripWorkbook(buf);
+      const opsInTerminal = STATE.operators.filter(o=>o.terminal===VIEW.manualInvoice.terminal && o.active!==false);
+      const groups = Object.entries(parsed.groups).map(([name, trips])=>{
+        const match = guessOperatorMatch(name, opsInTerminal);
+        return { name, trips, matchedOperatorId: match ? match.id : null };
+      });
+      MANUAL_IMPORT_PREVIEW = { terminalGuess: parsed.terminal, groups };
+      renderMain();
+    }catch(err){ toast('Import failed: ' + err.message); }
+    uploadFile.value = '';
+  });
+
+  const cancelImport = document.getElementById('btn-mi-cancel-import');
+  if(cancelImport) cancelImport.addEventListener('click', ()=>{ MANUAL_IMPORT_PREVIEW=null; renderMain(); });
+
+  document.querySelectorAll('[data-mi-map]').forEach(sel=>{
+    sel.addEventListener('change', ()=>{
+      const i = +sel.getAttribute('data-mi-map');
+      MANUAL_IMPORT_PREVIEW.groups[i].matchedOperatorId = sel.value || null;
+    });
+  });
+
+  const doImport = document.getElementById('btn-mi-do-import');
+  if(doImport) doImport.addEventListener('click', async ()=>{
+    const { from, to } = monthRange(VIEW.manualInvoice.period);
+    const terminalId = TERMINAL_IDS[VIEW.manualInvoice.terminal];
+    let imported = 0;
+    for(const g of MANUAL_IMPORT_PREVIEW.groups){
+      if(!g.matchedOperatorId) continue;
+      const op = STATE.operators.find(o=>o.id===g.matchedOperatorId);
+      if(!op) continue;
+      const rate = op.defaultTosRate || 10;
+      const quantity = g.trips.length;
+      const amount = +(quantity*rate).toFixed(2);
+      const invoiceNo = buildInvoiceNo(VIEW.manualInvoice.terminal, to, op.invoiceSeq);
+      try{
+        const saved = await GoStatementLive.saveManualInvoice({
+          terminalId, operatorId: op.id, invoiceNo, invoiceDate: to,
+          periodFrom: from, periodTo: to, rate, quantity, amount, rounding:0, grandTotal: amount,
+          billToName: op.company, billToAddress: '', status:'draft'
+        });
+        const trips = g.trips.map((t,idx)=>({ tripNo: t.no||idx+1, tripDate: t.dateIso, enter:t.enter, exit:t.exit, plate:t.plate, destination:t.destination }));
+        await GoStatementLive.saveManualTripEntries(saved.id, trips);
+        imported++;
+      }catch(err){ console.error('import invoice failed', op.company, err); }
+    }
+    MANUAL_IMPORT_PREVIEW = null;
+    toast(`Imported ${imported} manual invoice(s).`);
+    await loadManualInvoicesForView();
+  });
+
+  const addBtn = document.getElementById('btn-mi-add');
+  if(addBtn) addBtn.addEventListener('click', ()=> openManualInvoiceModal(null));
+
+  document.querySelectorAll('[data-mi-edit]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const inv = MANUAL_INVOICES_CACHE.find(x=>x.id===btn.getAttribute('data-mi-edit'));
+      if(inv) await openManualInvoiceModal(inv);
+    });
+  });
+  document.querySelectorAll('[data-mi-download-invoice]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const inv = MANUAL_INVOICES_CACHE.find(x=>x.id===btn.getAttribute('data-mi-download-invoice'));
+      if(inv) await downloadManualInvoicePdf(inv);
+    });
+  });
+  document.querySelectorAll('[data-mi-download-triplist]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const inv = MANUAL_INVOICES_CACHE.find(x=>x.id===btn.getAttribute('data-mi-download-triplist'));
+      if(inv) await downloadManualTripListPdf(inv);
+    });
+  });
+  document.querySelectorAll('[data-mi-toggle-status]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const inv = MANUAL_INVOICES_CACHE.find(x=>x.id===btn.getAttribute('data-mi-toggle-status'));
+      if(!inv) return;
+      const newStatus = inv.status==='finalized' ? 'draft' : 'finalized';
+      try{
+        await GoStatementLive.saveManualInvoice({
+          id:inv.id, terminalId:inv.terminal_id, operatorId:inv.operator_id, invoiceNo:inv.invoice_no,
+          invoiceDate:inv.invoice_date, periodFrom:inv.period_from, periodTo:inv.period_to, rate:inv.rate,
+          quantity:inv.quantity, amount:inv.amount, rounding:inv.rounding, grandTotal:inv.grand_total,
+          billToName:inv.bill_to_name, billToAddress:inv.bill_to_address, status:newStatus
+        });
+        toast(newStatus==='finalized' ? 'Invoice finalized.' : 'Invoice reopened as draft.');
+        await loadManualInvoicesForView();
+      }catch(err){ toast('Failed: '+err.message); }
+    });
+  });
+  document.querySelectorAll('[data-mi-delete]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('Delete this manual invoice? This cannot be undone.')) return;
+      try{
+        await GoStatementLive.deleteManualInvoice(btn.getAttribute('data-mi-delete'));
+        toast('Invoice deleted.');
+        await loadManualInvoicesForView();
+      }catch(err){ toast('Failed: '+err.message); }
+    });
   });
 }
 
