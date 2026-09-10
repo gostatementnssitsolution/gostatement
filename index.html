@@ -2936,6 +2936,9 @@ function openOperatorInfoModal(op){
         ${hasCloudAccount ? `<span class="sub" style="display:block; margin-top:4px;">This updates the directory record only — it does NOT change their existing sign-in email. Their statements, invoices and trip history are saved against this company record, so nothing is lost if the login email changes later.</span>` : ''}
       </div>
       <div class="field"><label>Additional email (optional — e.g. accounts/finance CC)</label><input type="email" id="opiAltEmail" value="${esc(op.altEmail || '')}" placeholder="finance@example.com"></div>
+      <div class="field"><label>Default TOS rate (RM per trip)</label><input type="number" id="opiRate" value="${op.defaultTosRate!=null ? op.defaultTosRate : ''}" min="0" max="1000" step="0.01" placeholder="e.g. 7.00">
+        <span class="sub" style="display:block; margin-top:4px;">Used as the starting rate for this operator's Manual Invoices — including ones auto-created from an Excel import. Can still be overridden per invoice.</span>
+      </div>
       <div class="modal-actions">
         <button type="button" class="btn" id="opiCancel">Cancel</button>
         <button type="submit" class="btn btn-primary">Save</button>
@@ -2949,13 +2952,20 @@ function openOperatorInfoModal(op){
     const companyAddress = document.getElementById('opiAddress').value.trim();
     const email = document.getElementById('opiEmail').value.trim();
     const altEmail = document.getElementById('opiAltEmail').value.trim();
+    const rateRaw = document.getElementById('opiRate').value.trim();
+    const defaultTosRate = rateRaw === '' ? null : Math.min(1000, Math.max(0, parseFloat(rateRaw)));
     op.companyName = companyName;
     op.companyAddress = companyAddress;
     op.email = email;
     op.altEmail = altEmail;
+    if(defaultTosRate != null) op.defaultTosRate = defaultTosRate;
     persist();
     if(window.GoStatementLive){
-      try{ await GoStatementLive.updateOperator(op.id, { company_name: companyName, company_address: companyAddress, email, alt_email: altEmail }); }
+      try{
+        const patch = { company_name: companyName, company_address: companyAddress, email, alt_email: altEmail };
+        if(defaultTosRate != null) patch.default_tos_rate = defaultTosRate;
+        await GoStatementLive.updateOperator(op.id, patch);
+      }
       catch(err){ toast('Saved locally — cloud sync failed: ' + err.message); }
     }
     closeModal();
@@ -4087,7 +4097,7 @@ function manualInvoiceInlineFormHtml(inv){
       </div>
       <div style="display:grid; grid-template-columns:1fr 140px; gap:12px; margin-bottom:4px;">
         <div class="field"><label>Bill-to company name</label><input type="text" id="miInlineBillName" value="${esc(inv.bill_to_name||(op?op.company:''))}" style="width:100%; box-sizing:border-box;"></div>
-        <div class="field"><label>Rate (RM/trip)</label><input type="number" step="0.01" id="miInlineRate" value="${rate}" style="width:100%; box-sizing:border-box;"></div>
+        <div class="field"><label>Rate (RM/trip)</label><input type="number" step="0.01" min="0" max="1000" id="miInlineRate" value="${rate}" style="width:100%; box-sizing:border-box;"></div>
       </div>
       <div class="field"><label>Bill-to address</label><textarea id="miInlineBillAddr" rows="2" style="width:100%; box-sizing:border-box;">${esc(inv.bill_to_address||'')}</textarea></div>
       <div class="field">
@@ -4151,7 +4161,7 @@ async function openManualInvoiceModal(existingInvoice){
         </div>
         <div class="field"><label>Bill-to company name</label><input type="text" id="miBillName" value="${esc(existingInvoice?(existingInvoice.bill_to_name||''):(op?(op.companyName||op.company):''))}"></div>
         <div class="field"><label>Bill-to address</label><textarea id="miBillAddr" rows="2">${esc(existingInvoice?(existingInvoice.bill_to_address||''):(op?(op.companyAddress||''):''))}</textarea></div>
-        <div class="field"><label>Rate (RM per trip)</label><input type="number" step="0.01" id="miRate" value="${rate}"></div>
+        <div class="field"><label>Rate (RM per trip)</label><input type="number" step="0.01" min="0" max="1000" id="miRate" value="${rate}"></div>
         <div class="field">
           <label>Trip rows (${MANUAL_TRIPS_DRAFT.length}) — quantity is derived from these rows when present</label>
           <div id="miTripsList" style="display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto;">
