@@ -73,7 +73,7 @@
     if (!user) return null;
     const { data, error } = await db
       .from("profiles")
-      .select("id, full_name, role, active, operator_id, operators(id, terminal_id, company, email, terminals(code, name))")
+      .select("id, full_name, role, active, is_super_admin, permissions, operator_id, operators(id, terminal_id, company, email, terminals(code, name))")
       .eq("id", user.id)
       .single();
     if (error) throw error;
@@ -172,23 +172,42 @@
     return data;
   }
 
-  // Admin accounts are created via Supabase Auth sign-up + an admin profile row.
-  // (Requires email confirmation to be handled by Supabase's own flow, or an
-  // existing admin approving via the dashboard — no service_role key is used
-  // client-side.)
-  async function inviteAdmin(email, fullName) {
-    const { data, error } = await db.auth.signUp({
-      email,
-      password: crypto.randomUUID(), // temp — the invitee resets it via email
-      options: { data: { full_name: fullName, role: "admin" } }
+  // Admin accounts are created via a service-role edge function, NOT
+  // db.auth.signUp() from the browser. signUp() on the same client the
+  // current admin is using silently swaps the browser's active session to
+  // the brand-new account — which is exactly why adding an admin used to
+  // make all the current admin's data look like it had vanished (they'd
+  // been signed out from under themselves). The edge function also enforces
+  // that only a super-admin can create/delete/re-scope other admins.
+  async function inviteAdmin(email, fullName, permissions) {
+    const { data, error } = await db.functions.invoke("manage-admin", {
+      body: { action: "create", email, full_name: fullName, permissions: permissions || [] },
     });
-    if (error) throw error;
-    if (data.user) {
-      await db.from("profiles").insert({
-        id: data.user.id, full_name: fullName, role: "admin", active: true
-      });
-      await requestPasswordReset(email);
-    }
+    if (error) { let msg = error.message; try { const b = await error.context.json(); if (b?.error) msg = b.error; } catch (_) {} throw new Error(msg); }
+    if (data?.error) throw new Error(data.error);
+    return data; // { ok, email, password }
+  }
+
+  // Full admin roster (with email) via the edge function — the plain
+  // profiles table has no email column, and the client can't read auth.users.
+  async function listAdminsWithEmail() {
+    const { data, error } = await db.functions.invoke("manage-admin", { body: { action: "list" } });
+    if (error) { let msg = error.message; try { const b = await error.context.json(); if (b?.error) msg = b.error; } catch (_) {} throw new Error(msg); }
+    if (data?.error) throw new Error(data.error);
+    return data.admins || [];
+  }
+
+  async function deleteAdmin(profileId) {
+    const { data, error } = await db.functions.invoke("manage-admin", { body: { action: "delete", profile_id: profileId } });
+    if (error) { let msg = error.message; try { const b = await error.context.json(); if (b?.error) msg = b.error; } catch (_) {} throw new Error(msg); }
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }
+
+  async function updateAdminPermissions(profileId, permissions) {
+    const { data, error } = await db.functions.invoke("manage-admin", { body: { action: "update_permissions", profile_id: profileId, permissions } });
+    if (error) { let msg = error.message; try { const b = await error.context.json(); if (b?.error) msg = b.error; } catch (_) {} throw new Error(msg); }
+    if (data?.error) throw new Error(data.error);
     return data;
   }
 
@@ -393,7 +412,7 @@
     loadTerminals, loadOperators, createOperator, updateOperator, provisionOperatorLogin,
     generateClaimCode, lookupClaim, claimAccount,
     // admins
-    listAdmins, inviteAdmin, setAdminActive,
+    listAdmins, listAdminsWithEmail, inviteAdmin, setAdminActive, deleteAdmin, updateAdminPermissions,
     // entries
     loadEntries, getEntry, saveEntry, setEntryStatus, bulkSetStatus, deleteEntry,
     // manual invoice + trip list

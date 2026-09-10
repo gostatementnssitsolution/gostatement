@@ -642,6 +642,16 @@ async function cloudLoadAll(){
       else STATE.operators.push({ id: o.id, terminal: code, company: o.company, email: o.email, altEmail: o.alt_email||'', passwordHash: null, mustChange:false, active: o.active !== false, invoiceSeq: o.invoice_seq, defaultTosRate: Number(o.default_tos_rate)||10, companyName: o.company_name||'', companyAddress: o.company_address||'' });
     }
 
+    try{
+      const cloudAdmins = await GoStatementLive.listAdminsWithEmail();
+      for(const p of cloudAdmins){
+        const existing = STATE.admins.find(x=>x.id===p.id);
+        const fields = { id: p.id, name: p.full_name || 'Administrator', email: p.email, passwordHash:null, mustChange:false, active: p.active !== false, isSuperAdmin: !!p.is_super_admin, permissions: p.permissions || [] };
+        if(existing) Object.assign(existing, fields);
+        else STATE.admins.push(fields);
+      }
+    }catch(err){ console.error('GoStatement Live: listAdminsWithEmail failed', err); }
+
     const entries = await GoStatementLive.loadEntries();
     for(const e of entries){
       if(!e.terminals || !e.operators) continue;
@@ -1040,10 +1050,11 @@ async function handleLogin(e){
       await cloudLoadAll();
       const profile = await GoStatementLive.getMyProfile();
       if(profile && profile.role === 'admin'){
-        if(!STATE.admins.find(a=>a.id===profile.id)){
-          STATE.admins.push({ id: profile.id, name: profile.full_name || 'Administrator', email: idVal, passwordHash:null, mustChange:false, active: profile.active !== false });
-          persist();
-        }
+        const existingAdmin = STATE.admins.find(a=>a.id===profile.id);
+        const adminFields = { id: profile.id, name: profile.full_name || 'Administrator', email: idVal, passwordHash:null, mustChange:false, active: profile.active !== false, isSuperAdmin: !!profile.is_super_admin, permissions: profile.permissions || [] };
+        if(existingAdmin) Object.assign(existingAdmin, adminFields);
+        else STATE.admins.push(adminFields);
+        persist();
         setSession({ type:'admin', adminId: profile.id });
         enterApp();
         startCloudRealtime(()=>{ if(document.getElementById('app').classList.contains('active')) renderMain(); });
@@ -1219,9 +1230,24 @@ const ICONS = {
   invoice: icon('<path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z"/><path d="M14 2v5h5"/><path d="M8 12h4M8 16h8M8 8h2"/>'),
 };
 
+// Grantable app sections for a scoped (non-super) admin. 'admins' isn't in
+// here on purpose — managing admin accounts is a super-admin-only power,
+// never something a super-admin can hand out via permissions.
+const PERMISSION_SECTIONS = [
+  {key:'overview', label:'Overview'},
+  {key:'directory', label:'Operator Directory'},
+  {key:'ledger', label:'Settlement Ledger'},
+  {key:'entry', label:'Daily Entry'},
+  {key:'reconcile', label:'Reconciliation'},
+  {key:'manualinvoice', label:'Manual Invoice'},
+];
+// Admins created before this feature existed (isSuperAdmin left undefined)
+// keep full access — only an explicit `false` scopes them down.
+function isAdminUnrestricted(admin){ return admin.isSuperAdmin !== false; }
+function adminCanAccess(admin, routeKey){ return isAdminUnrestricted(admin) || (admin.permissions||[]).includes(routeKey); }
 function navItemsFor(actor){
   if(actor.type === 'admin' && !VIEW.viewingAsOperatorId){
-    return [
+    const all = [
       {route:'overview', label:'Overview', icon:ICONS.overview},
       {route:'directory', label:'Operator Directory', icon:ICONS.directory},
       {route:'ledger', label:'Settlement Ledger', icon:ICONS.ledger},
@@ -1230,6 +1256,10 @@ function navItemsFor(actor){
       {route:'manualinvoice', label:'Manual Invoice', icon:ICONS.invoice},
       {route:'admins', label:'Admins', icon:ICONS.admins},
     ];
+    return all.filter(item=>{
+      if(item.route === 'admins') return isAdminUnrestricted(actor.admin);
+      return adminCanAccess(actor.admin, item.route);
+    });
   }
   return [
     {route:'dashboard', label:'Dashboard', icon:ICONS.dashboard},
@@ -1247,7 +1277,10 @@ function renderShell(){
   const group = el('<div class="nav-group"></div>');
   for(const item of navItemsFor(actor)){
     const btn = el(`<button class="nav-item ${VIEW.route===item.route?'active':''}">${item.icon}<span>${item.label}</span></button>`);
-    btn.addEventListener('click', ()=>{ IMPORT_PREVIEW = null; VIEW.route = item.route; renderShell(); });
+    btn.addEventListener('click', async ()=>{
+      IMPORT_PREVIEW = null; VIEW.route = item.route; renderShell();
+      if(item.route === 'admins' && window.GoStatementLive){ await cloudLoadAll(); renderMain(); }
+    });
     group.appendChild(btn);
   }
   nav.appendChild(group);
@@ -2778,26 +2811,32 @@ function importPreviewHtml(){
    ============================================================ */
 function adminUsersHtml(){
   const admins = STATE.admins;
+  const actor = currentActor();
+  const viewerIsSuper = actor && actor.type==='admin' && isAdminUnrestricted(actor.admin);
   return `
     <div id="topbar">
-      <div><h1>Admins</h1><div class="desc">People who can manage both terminals</div></div>
-      <div class="topbar-actions"><button class="btn btn-accent btn-sm" id="btn-add-admin">+ Add Admin</button></div>
+      <div><h1>Admins</h1><div class="desc">People who can manage both terminals — only a super-admin can add, remove, or re-scope other admins</div></div>
+      <div class="topbar-actions">${viewerIsSuper ? '<button class="btn btn-accent btn-sm" id="btn-add-admin">+ Add Admin</button>' : ''}</div>
     </div>
     <div class="card table-card">
       <div class="scrollx">
         <table>
-          <thead><tr><th style="text-align:left;">Name</th><th style="text-align:left;">Login ID</th><th style="text-align:left;">Email</th><th>Status</th><th style="text-align:right;">Actions</th></tr></thead>
+          <thead><tr><th style="text-align:left;">Name</th><th style="text-align:left;">Email</th><th>Access</th><th>Status</th><th style="text-align:right;">Actions</th></tr></thead>
           <tbody>
             ${admins.map(a=>`
               <tr>
                 <td style="text-align:left;">
                   <div class="op-row"><div class="op-badge">${initials(a.name||a.id)}</div><div class="op-meta"><div class="name">${esc(a.name||a.id)}</div></div></div>
                 </td>
-                <td style="text-align:left;">${esc(a.id)}</td>
                 <td style="text-align:left;">${a.email? esc(a.email) : '<span style="color:var(--ink-faint);">—</span>'}</td>
+                <td>${isAdminUnrestricted(a) ? '<span class="pill pill-accent">Full access</span>' : `<span class="pill pill-neutral" title="${esc((a.permissions||[]).join(', ') || 'No sections granted')}">${(a.permissions||[]).length} section(s)</span>`}</td>
                 <td>${a.active!==false ? '<span class="pill pill-good">Active</span>' : '<span class="pill pill-bad">Inactive</span>'}</td>
                 <td style="text-align:right;">
-                  <button class="btn btn-sm ${a.active!==false?'btn-danger':''}" data-admin-act="toggle" data-admin-id="${a.id}" ${admins.filter(x=>x.active!==false).length<=1 && a.active!==false ? 'disabled title="At least one active admin is required"' : ''}>${a.active!==false?'Deactivate':'Activate'}</button>
+                  <div style="display:flex; gap:6px; justify-content:flex-end;">
+                    ${viewerIsSuper ? `<button class="btn btn-sm" data-admin-act="permissions" data-admin-id="${a.id}">Manage Access</button>` : ''}
+                    <button class="btn btn-sm ${a.active!==false?'btn-danger':''}" data-admin-act="toggle" data-admin-id="${a.id}" ${!viewerIsSuper ? 'disabled' : ''} ${admins.filter(x=>x.active!==false).length<=1 && a.active!==false ? 'disabled title="At least one active admin is required"' : ''}>${a.active!==false?'Deactivate':'Activate'}</button>
+                    ${viewerIsSuper ? `<button class="btn btn-sm btn-danger" data-admin-act="delete" data-admin-id="${a.id}" ${(actor.admin.id===a.id) ? 'disabled title="You cannot delete your own account"' : ''}>Delete</button>` : ''}
+                  </div>
                 </td>
               </tr>`).join('')}
           </tbody>
@@ -3048,15 +3087,26 @@ function showCredentialModal(op){
   document.getElementById('credOk').addEventListener('click', closeModal);
 }
 function openAddAdminModal(){
+  const cloudConnected = window.GoStatementLive && Object.keys(TERMINAL_IDS).length > 0;
   openModal(`
     <h3>Add admin</h3>
-    <span class="sub">They will use this login ID and password to sign in as an administrator.</span>
+    <span class="sub">${cloudConnected ? "Choose which sections they can access — leave all unchecked and tick \"All sections\" for full access." : "They will use this login ID and password to sign in as an administrator."}</span>
     <form id="addAdminForm">
       <div class="field"><label>Full name</label><input type="text" id="newAdminName" placeholder="e.g. Nur Aisyah" required></div>
+      ${cloudConnected ? `
+      <div class="field"><label>Email</label><input type="email" id="newAdminEmail" placeholder="aisyah@example.com" required></div>
+      <label style="display:flex; align-items:center; gap:8px; margin:10px 0; font-weight:600;">
+        <input type="checkbox" id="newAdminFullAccess" checked> All sections (still can't manage other admins)
+      </label>
+      <div id="newAdminSectionsWrap" style="display:none; margin-bottom:8px;">
+        ${PERMISSION_SECTIONS.map(s=>`<label style="display:flex; align-items:center; gap:8px; margin-bottom:6px;"><input type="checkbox" class="new-admin-perm" value="${s.key}"> ${esc(s.label)}</label>`).join('')}
+      </div>
+      ` : `
       <div class="field"><label>Login ID</label><input type="text" id="newAdminId" placeholder="e.g. aisyah.admin" required></div>
       <div class="field"><label>Email (optional)</label><input type="email" id="newAdminEmail" placeholder="aisyah@example.com"></div>
       <div class="field"><label>Password</label><div class="pw-wrap"><input type="password" id="newAdminPw" minlength="6" required><button type="button" class="pw-toggle" data-pw-toggle="newAdminPw" tabindex="-1">${EYE_ICON}</button></div></div>
       <div class="field"><label>Confirm password</label><div class="pw-wrap"><input type="password" id="newAdminPw2" minlength="6" required><button type="button" class="pw-toggle" data-pw-toggle="newAdminPw2" tabindex="-1">${EYE_ICON}</button></div></div>
+      `}
       <div id="addAdminErr" style="color:var(--bad); font-size:13px; display:none;"></div>
       <div class="modal-actions">
         <button type="button" class="btn" id="addAdminCancel">Cancel</button>
@@ -3065,14 +3115,50 @@ function openAddAdminModal(){
     </form>
   `);
   document.getElementById('addAdminCancel').addEventListener('click', closeModal);
+  const fullAccessCb = document.getElementById('newAdminFullAccess');
+  if(fullAccessCb) fullAccessCb.addEventListener('change', (e)=>{
+    document.getElementById('newAdminSectionsWrap').style.display = e.target.checked ? 'none' : 'block';
+  });
   document.getElementById('addAdminForm').addEventListener('submit', async (e)=>{
     e.preventDefault();
     const name = document.getElementById('newAdminName').value.trim();
+    const errEl = document.getElementById('addAdminErr');
+    errEl.style.display = 'none';
+
+    if(cloudConnected){
+      const email = document.getElementById('newAdminEmail').value.trim();
+      const fullAccess = document.getElementById('newAdminFullAccess').checked;
+      const permissions = fullAccess ? PERMISSION_SECTIONS.map(s=>s.key) : Array.from(document.querySelectorAll('.new-admin-perm:checked')).map(el=>el.value);
+      const submitBtn = e.target.querySelector('button[type="submit"]');
+      submitBtn.disabled = true; submitBtn.textContent = 'Creating…';
+      try{
+        const result = await GoStatementLive.inviteAdmin(email, name, permissions);
+        closeModal();
+        openModal(`
+          <h3>Admin account created</h3>
+          <span class="sub">Share these credentials with ${esc(name)} through a secure channel (not a public one). This is a real cloud login — works from any device.</span>
+          <div class="credential-box">
+            <div><b>Login email:</b> ${esc(result.email)}</div>
+            <div><b>Temporary password:</b> ${esc(result.password)}</div>
+          </div>
+          <div class="modal-actions"><button class="btn btn-primary" id="newAdminCredOk">Done</button></div>
+        `);
+        document.getElementById('newAdminCredOk').addEventListener('click', closeModal);
+        await cloudLoadAll();
+        renderMain();
+      }catch(err){
+        errEl.textContent = 'Could not create admin: ' + err.message;
+        errEl.style.display = 'block';
+        submitBtn.disabled = false; submitBtn.textContent = 'Create admin';
+      }
+      return;
+    }
+
+    // Legacy local-only fallback (no cloud connection this session).
     const id = document.getElementById('newAdminId').value.trim();
     const email = document.getElementById('newAdminEmail').value.trim() || null;
     const pw = document.getElementById('newAdminPw').value;
     const pw2 = document.getElementById('newAdminPw2').value;
-    const errEl = document.getElementById('addAdminErr');
     if(!id){ errEl.textContent='Login ID is required.'; errEl.style.display='block'; return; }
     if(findAdminByLoginId(id) || (email && findAdminByLoginId(email))){ errEl.textContent='This login ID or email is already in use.'; errEl.style.display='block'; return; }
     if(pw !== pw2){ errEl.textContent='Password confirmation does not match.'; errEl.style.display='block'; return; }
@@ -3203,6 +3289,11 @@ function renderMain(){
     else if(VIEW.route === 'manualinvoice') html = operatorManualInvoiceHtml(effectiveOp);
     else html = operatorDashboardHtml(effectiveOp);
   } else {
+    // Defense in depth: a scoped admin can't reach a section they weren't
+    // granted just by VIEW.route being set some other way (e.g. a stale
+    // link) — fall back to whatever they're actually allowed to see.
+    const routeAllowed = VIEW.route === 'admins' ? isAdminUnrestricted(actor.admin) : adminCanAccess(actor.admin, VIEW.route);
+    if(!routeAllowed){ VIEW.route = navItemsFor(actor)[0]?.route || 'overview'; }
     if(VIEW.route === 'directory') html = adminDirectoryHtml();
     else if(VIEW.route === 'ledger') html = adminLedgerHtml();
     else if(VIEW.route === 'entry') html = adminEntryHtml();
@@ -3456,15 +3547,87 @@ function wireMain(actor, effectiveOp){
     });
   });
   document.querySelectorAll('[data-admin-act]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
+    btn.addEventListener('click', async ()=>{
       const id = btn.getAttribute('data-admin-id');
+      const act = btn.getAttribute('data-admin-act');
       const a = findAdminById(id);
       if(!a) return;
-      const activeCount = STATE.admins.filter(x=>x.active!==false).length;
-      if(a.active!==false && activeCount<=1){ toast('At least one active admin is required.'); return; }
-      a.active = a.active===false ? true : false;
-      persist(); renderMain();
-      toast(a.active!==false ? 'Admin activated.' : 'Admin deactivated.');
+
+      if(act === 'toggle'){
+        const activeCount = STATE.admins.filter(x=>x.active!==false).length;
+        if(a.active!==false && activeCount<=1){ toast('At least one active admin is required.'); return; }
+        const nextActive = a.active===false ? true : false;
+        a.active = nextActive;
+        persist(); renderMain();
+        if(window.GoStatementLive){
+          try{ await GoStatementLive.setAdminActive(a.id, nextActive); }
+          catch(err){ toast('Saved locally — cloud sync failed: ' + err.message); }
+        }
+        toast(a.active!==false ? 'Admin activated.' : 'Admin deactivated.');
+      }
+
+      if(act === 'delete'){
+        if(!window.GoStatementLive){ toast('Not connected to the cloud in this session.'); return; }
+        openModal(`
+          <h3>Delete admin — ${esc(a.name||a.email)}</h3>
+          <span class="sub">This permanently removes their login. This can't be undone.</span>
+          <div class="modal-actions">
+            <button type="button" class="btn" id="delAdminCancel">Cancel</button>
+            <button type="button" class="btn btn-danger" id="delAdminConfirm">Delete permanently</button>
+          </div>
+        `);
+        document.getElementById('delAdminCancel').addEventListener('click', closeModal);
+        document.getElementById('delAdminConfirm').addEventListener('click', async ()=>{
+          try{
+            await GoStatementLive.deleteAdmin(a.id);
+            STATE.admins = STATE.admins.filter(x=>x.id!==a.id);
+            persist(); closeModal(); renderMain();
+            toast('Admin deleted.');
+          }catch(err){ toast('Could not delete: ' + err.message); }
+        });
+      }
+
+      if(act === 'permissions'){
+        openModal(`
+          <h3>Manage Access — ${esc(a.name||a.email)}</h3>
+          <span class="sub">Choose exactly which sections this admin can see and use.</span>
+          <form id="permForm">
+            <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px; font-weight:600;">
+              <input type="checkbox" id="permFullAccess" ${isAdminUnrestricted(a) ? 'checked' : ''}> All sections (still can't manage other admins)
+            </label>
+            <div id="permSectionsWrap" style="display:${isAdminUnrestricted(a) ? 'none' : 'block'}; margin-bottom:8px;">
+              ${PERMISSION_SECTIONS.map(s=>`
+                <label style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                  <input type="checkbox" class="perm-section" value="${s.key}" ${(a.permissions||[]).includes(s.key)?'checked':''}> ${esc(s.label)}
+                </label>`).join('')}
+            </div>
+            <div class="modal-actions">
+              <button type="button" class="btn" id="permCancel">Cancel</button>
+              <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+          </form>
+        `);
+        document.getElementById('permCancel').addEventListener('click', closeModal);
+        document.getElementById('permFullAccess').addEventListener('change', (e)=>{
+          document.getElementById('permSectionsWrap').style.display = e.target.checked ? 'none' : 'block';
+        });
+        document.getElementById('permForm').addEventListener('submit', async (e)=>{
+          e.preventDefault();
+          const fullAccess = document.getElementById('permFullAccess').checked;
+          const permissions = fullAccess ? [] : Array.from(document.querySelectorAll('.perm-section:checked')).map(el=>el.value);
+          try{
+            // Full access is expressed server-side as is_super_admin — but that
+            // flag can only be granted by directly editing the database today;
+            // from this UI we scope via `permissions` and treat an empty list
+            // as "not yet restricted" only when isSuperAdmin is already true.
+            if(!fullAccess) await GoStatementLive.updateAdminPermissions(a.id, permissions);
+            else await GoStatementLive.updateAdminPermissions(a.id, PERMISSION_SECTIONS.map(s=>s.key));
+            a.permissions = fullAccess ? PERMISSION_SECTIONS.map(s=>s.key) : permissions;
+            persist(); closeModal(); renderMain();
+            toast('Access updated.');
+          }catch(err){ toast('Could not update access: ' + err.message); }
+        });
+      }
     });
   });
 
@@ -4331,10 +4494,11 @@ window.addEventListener('resize', ()=>{
         await cloudLoadAll();
         const profile = await GoStatementLive.getMyProfile();
         if(profile && profile.role === 'admin'){
-          if(!STATE.admins.find(a=>a.id===profile.id)){
-            STATE.admins.push({ id: profile.id, name: profile.full_name || 'Administrator', email: cloudSession.user.email, passwordHash:null, mustChange:false, active: profile.active !== false });
-            persist();
-          }
+          const existingAdmin = STATE.admins.find(a=>a.id===profile.id);
+          const adminFields = { id: profile.id, name: profile.full_name || 'Administrator', email: cloudSession.user.email, passwordHash:null, mustChange:false, active: profile.active !== false, isSuperAdmin: !!profile.is_super_admin, permissions: profile.permissions || [] };
+          if(existingAdmin) Object.assign(existingAdmin, adminFields);
+          else STATE.admins.push(adminFields);
+          persist();
           setSession({ type:'admin', adminId: profile.id });
         } else if(profile && profile.operators){
           const op = STATE.operators.find(o=>o.id === profile.operators.id);
