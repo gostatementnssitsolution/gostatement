@@ -706,8 +706,8 @@ const STATUS_LABEL = { draft:'Draft', prefinalized:'Pre-Finalized', finalized:'F
 // Categorizes every manually-added deduction/addition (RFID charge, refund,
 // undersales correction, etc.) so admin can later search "which operators
 // did we refund" instead of reading every ledger row one by one.
-const ADJUSTMENT_TYPES = ['Refund', 'RFID Charge', 'Undersales', 'Penalty', 'Correction', 'Other'];
-const ADJUSTMENT_TYPE_COLOR = { 'Refund':'var(--accent)', 'RFID Charge':'var(--bad)', 'Undersales':'var(--bad)', 'Penalty':'var(--bad)', 'Correction':'var(--good)', 'Other':'var(--ink-faint)' };
+const ADJUSTMENT_TYPES = ['Refund', 'RFID Charge', 'Undersales', 'Penalty', 'Correction', 'Manual Charge', 'Terminal Charge', 'Other'];
+const ADJUSTMENT_TYPE_COLOR = { 'Refund':'var(--accent)', 'RFID Charge':'var(--bad)', 'Undersales':'var(--bad)', 'Penalty':'var(--bad)', 'Correction':'var(--good)', 'Manual Charge':'var(--bad)', 'Terminal Charge':'var(--bad)', 'Other':'var(--ink-faint)' };
 const STATUS_PILL = { draft:'pill-neutral', prefinalized:'pill-accent', finalized:'pill-good' };
 function getEntryStatus(terminal, company, date){
   const e = STATE.entries[entryKey(terminal, company, date)];
@@ -1820,6 +1820,13 @@ function searchAdjustments(query, typeFilter){
         lines.push({ label, amount: Number(v), type: guessAdjustmentType(label) });
       }
     }
+    // Manual Charges and Terminal/Pickup Charges are plain numeric columns on
+    // the entry, not itemized labels — without these, a search for "manual"
+    // or "terminal charge" would silently find nothing even when the entry
+    // genuinely has one, which is exactly the confusing gap this search was
+    // built to avoid for adjustments/items.
+    if(entry.manualCharge) lines.push({ label:'Manual Charge', amount: Number(entry.manualCharge), type:'Manual Charge' });
+    if(entry.stdCharge) lines.push({ label:'Terminal/Pickup Charge', amount: Number(entry.stdCharge), type:'Terminal Charge' });
     for(const line of lines){
       if(typeFilter && typeFilter !== 'ALL' && line.type !== typeFilter) continue;
       if(q && !line.label.toLowerCase().includes(q) && !line.type.toLowerCase().includes(q) && !company.toLowerCase().includes(q)) continue;

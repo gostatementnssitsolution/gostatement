@@ -245,19 +245,33 @@
   /* ---------------- Settlement entries ---------------- */
 
   // filters: { terminalCode, operatorId, dateFrom, dateTo, status }
+  //
+  // The table has grown past Supabase's default API row cap (1000/request),
+  // so a plain .select() here silently truncates to the most recent ~1000
+  // rows — everything older (e.g. last month's entries) would look like it
+  // never existed to the app, even though it's still in Postgres. Page
+  // through with .range() until a page comes back short, so the full result
+  // set loads regardless of how big the table gets.
   async function loadEntries(filters = {}) {
-    let q = db
-      .from("settlement_entries")
-      .select("*, terminals(code, name), operators(company, email)")
-      .order("entry_date", { ascending: false });
-    if (filters.terminalCode) q = q.eq("terminals.code", filters.terminalCode);
-    if (filters.operatorId) q = q.eq("operator_id", filters.operatorId);
-    if (filters.dateFrom) q = q.gte("entry_date", filters.dateFrom);
-    if (filters.dateTo) q = q.lte("entry_date", filters.dateTo);
-    if (filters.status) q = q.eq("status", filters.status);
-    const { data, error } = await q;
-    if (error) throw error;
-    return data;
+    const PAGE = 1000;
+    let all = [];
+    for (let from = 0; ; from += PAGE) {
+      let q = db
+        .from("settlement_entries")
+        .select("*, terminals(code, name), operators(company, email)")
+        .order("entry_date", { ascending: false })
+        .range(from, from + PAGE - 1);
+      if (filters.terminalCode) q = q.eq("terminals.code", filters.terminalCode);
+      if (filters.operatorId) q = q.eq("operator_id", filters.operatorId);
+      if (filters.dateFrom) q = q.gte("entry_date", filters.dateFrom);
+      if (filters.dateTo) q = q.lte("entry_date", filters.dateTo);
+      if (filters.status) q = q.eq("status", filters.status);
+      const { data, error } = await q;
+      if (error) throw error;
+      all = all.concat(data);
+      if (data.length < PAGE) break;
+    }
+    return all;
   }
 
   async function getEntry(terminalCode, company, entryDate) {
