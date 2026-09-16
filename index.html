@@ -367,9 +367,27 @@
   .table-toolbar input, .table-toolbar select{
     border-color:var(--border) !important; background:var(--surface) !important;
   }
+  /* patched search */
   .table-toolbar input:focus, .table-toolbar select:focus{
     border-color:var(--brand) !important; box-shadow:0 0 0 2px var(--brand-soft) !important;
   }
+
+  /* Statements filter — bank polish */
+  .cs-search-input{
+    padding:8px 12px; border-radius:8px; border:1px solid var(--border);
+    background:var(--surface); color:var(--ink); font-size:13px; min-width:220px;
+  }
+  .cs-search-input:focus{ border-color:var(--brand); box-shadow:0 0 0 2px var(--brand-soft); outline:none; }
+  .date-input{
+    padding:8px 10px; border-radius:8px; border:1px solid var(--border);
+    background:var(--surface); color:var(--ink); font-size:13px;
+  }
+  .date-input:focus{ border-color:var(--brand); box-shadow:0 0 0 2px var(--brand-soft); outline:none; }
+  .skeleton{ background:linear-gradient(90deg, var(--surface-2) 25%, var(--surface) 50%, var(--surface-2) 75%); background-size:200% 100%; animation:shimmer 1.2s infinite; border-radius:6px; height:14px; }
+  @keyframes shimmer{ 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+  .empty-bank{ padding:36px 20px; text-align:center; color:var(--ink-faint); }
+  .empty-bank .empty-title{ font-family:var(--font-display); font-size:16px; color:var(--ink-soft); margin-bottom:6px; }
+
 </style>
 
 <!-- ===================== LOGIN ===================== -->
@@ -1591,6 +1609,10 @@ function wireRangeControls(onChange){
   const to = document.getElementById('rangeTo');
   if(from) from.addEventListener('change', ()=>{ VIEW.customFrom = from.value; onChange(); });
   if(to) to.addEventListener('change', ()=>{ VIEW.customTo = to.value; onChange(); });
+
+  if(from) from.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); VIEW.customFrom = from.value; onChange(); }});
+  if(to) to.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); VIEW.customTo = to.value; onChange(); }});
+
 }
 
 /* ============================================================
@@ -2179,9 +2201,9 @@ function drawManualInvoicePage(pdf, inv, logo){
 
   let y = H-40;
   if(logo){
-    const boxH = 30, boxW = boxH * (logo.width/logo.height);
+    const boxH = 42, boxW = boxH * (logo.width/logo.height);
     if(!pdf.imageObjs['Im1']) pdf.addImageXObject('Im1', logo.bytes, logo.width, logo.height);
-    ops += `q ${boxW.toFixed(2)} 0 0 ${boxH.toFixed(2)} ${(M-6).toFixed(2)} ${(y-boxH+2).toFixed(2)} cm /Im1 Do Q\n`;
+    ops += `q ${boxW.toFixed(2)} 0 0 ${boxH.toFixed(2)} ${(M-6).toFixed(2)} ${(y-boxH+6).toFixed(2)} cm /Im1 Do Q\n`;
   } else {
     ops += pdfRect(M-6, y-28, 42, 26, PDF_COLOR.maroon);
     ops += pdfTextCenter(M-6+21, y-16, 'NSS', 'F2', 10, PDF_COLOR.white);
@@ -4973,14 +4995,15 @@ function filterChargeStatements(stmts, opts){
 function chargeStatementFilterControlsHtml(opts){
   const v = VIEW.chargeStatements;
   return `
-    ${opts.showOperator?`<input type="text" id="csSearch" class="btn btn-sm" placeholder="Search operator or statement no." value="${esc(v.search)}" style="min-width:200px;">`:''}
+    ${opts.showOperator?`<input type="search" id="csSearch" class="cs-search-input" placeholder="Search operator or statement no." value="${esc(v.search)}" style="min-width:200px;">`:''}
     <select id="csTypeFilter" class="btn btn-sm">
       <option value="ALL" ${v.typeFilter==='ALL'?'selected':''}>All types</option>
       ${Object.entries(STATEMENT_TYPES).map(([k,val])=>`<option value="${k}" ${v.typeFilter===k?'selected':''}>${val.label}</option>`).join('')}
     </select>
-    <input type="date" id="csDateFrom" class="btn btn-sm" value="${v.dateFrom||''}" title="From date">
-    <input type="date" id="csDateTo" class="btn btn-sm" value="${v.dateTo||''}" title="Until date">
-    ${(v.typeFilter!=='ALL'||v.dateFrom||v.dateTo||v.search) ? `<button class="btn btn-sm" id="btn-cs-clear-filters">Clear filters</button>` : ''}
+    <input type="date" id="csDateFrom" class="date-input" value="${v.dateFrom||''}" title="From date">
+    <input type="date" id="csDateTo" class="date-input" value="${v.dateTo||''}" title="Until date">
+    ${(v.dateFrom||v.dateTo) ? `<button class="btn btn-primary btn-sm" id="btn-cs-apply-date">Apply</button>` : ''}
+    ${(v.typeFilter!=='ALL'||v.dateFrom||v.dateTo||v.search) ? `<button class="btn btn-sm" id="btn-cs-clear-filters">Clear</button>` : ''}
   `;
 }
 
@@ -5127,11 +5150,11 @@ async function openChargeStatementModal(actor, effectiveOp, existingStatement){
             ${Object.entries(STATEMENT_TYPES).map(([k,v])=>`<option value="${k}" ${k===selectedType?'selected':''}>${v.label}</option>`).join('')}
           </select>
         </div>
-        <div class="field"><label>Statement date</label><input type="date" id="csDate" value="${existingStatement?existingStatement.statement_date:today}"></div>
+        <div class="field"><label>Statement date</label><input type="date" id="csDate" class="date-input" value="${existingStatement?existingStatement.statement_date:today}"></div>
         <div class="field"><label>Period (optional)</label>
           <div style="display:flex; gap:8px;">
-            <input type="date" id="csPeriodFrom" value="${existingStatement?(existingStatement.period_from||''):''}" style="flex:1;">
-            <input type="date" id="csPeriodTo" value="${existingStatement?(existingStatement.period_to||''):''}" style="flex:1;">
+            <input type="date" id="csPeriodFrom" class="date-input" value="${existingStatement?(existingStatement.period_from||''):''}" style="flex:1;">
+            <input type="date" id="csPeriodTo" class="date-input" value="${existingStatement?(existingStatement.period_to||''):''}" style="flex:1;">
           </div>
         </div>
         <div class="field"><label>Amount (RM)</label><input type="number" step="0.01" min="0" id="csAmount" value="${existingStatement?Number(existingStatement.amount).toFixed(2):''}"></div>
@@ -5206,10 +5229,21 @@ function wireChargeStatements(actor, effectiveOp){
   const dateTo = document.getElementById('csDateTo');
   if(dateTo) dateTo.addEventListener('change', ()=>{ VIEW.chargeStatements.dateTo = dateTo.value; renderMain(); });
   const clearFilters = document.getElementById('btn-cs-clear-filters');
+
+  const btnCsApply = document.getElementById('btn-cs-apply-date');
+  if(btnCsApply) btnCsApply.addEventListener('click', ()=> renderMain());
+
   if(clearFilters) clearFilters.addEventListener('click', ()=>{
     VIEW.chargeStatements.typeFilter = 'ALL'; VIEW.chargeStatements.search = ''; VIEW.chargeStatements.dateFrom = ''; VIEW.chargeStatements.dateTo = '';
     renderMain();
   });
+
+  const csDateFromEl = document.getElementById('csDateFrom');
+  if(csDateFromEl) csDateFromEl.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); renderMain(); }});
+  const csDateToEl = document.getElementById('csDateTo');
+  if(csDateToEl) csDateToEl.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); renderMain(); }});
+  const csSearchEl2 = document.getElementById('csSearch');
+  if(csSearchEl2) csSearchEl2.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); renderMain(); }});
 
   document.querySelectorAll('[data-cs-toggle]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
