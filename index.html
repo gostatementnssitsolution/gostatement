@@ -951,6 +951,8 @@ const VIEW = {
   selectedOperatorId: null, // which of MY_OPERATORS is active, for a multi-operator login
   adjSearchQuery: '',
   adjSearchType: 'ALL',
+  adjDateFrom: '',
+  adjDateTo: '',
 };
 
 /* ============================================================
@@ -1805,12 +1807,14 @@ function guessAdjustmentType(label){
 // list (has an explicit Type), and Excel-imported itemized `items` (e.g.
 // "Parking Charges Refund") which never had a Type field — those get a
 // best-guess type from their label instead of being invisible to search.
-function searchAdjustments(query, typeFilter){
+function searchAdjustments(query, typeFilter, dateFrom, dateTo){
   const q = (query||'').trim().toLowerCase();
   const results = [];
   for(const key in STATE.entries){
     const entry = STATE.entries[key];
     const [terminal, company, date] = key.split('|');
+    if(dateFrom && date < dateFrom) continue;
+    if(dateTo && date > dateTo) continue;
     const lines = [];
     if(entry.adjustments && entry.adjustments.length){
       for(const adj of entry.adjustments){
@@ -1818,19 +1822,25 @@ function searchAdjustments(query, typeFilter){
         lines.push({ label: adj.label || 'Adjustment', amount: Number(adj.amount), type: adj.type || guessAdjustmentType(adj.label) });
       }
     }
-    if(entry.items && Object.keys(entry.items).length){
+    const hasItems = entry.items && Object.keys(entry.items).length;
+    if(hasItems){
       for(const [label, v] of Object.entries(entry.items)){
         if(!v) continue;
         lines.push({ label, amount: Number(v), type: guessAdjustmentType(label) });
       }
+    } else {
+      // Manual Charges and Terminal/Pickup Charges are plain numeric columns
+      // on the entry, not itemized labels — without these, a search for
+      // "manual" or "terminal charge" would silently find nothing even when
+      // the entry genuinely has one. Only synthesize this when there's no
+      // itemized breakdown at all: when `items` IS populated (the normal
+      // Excel-import case), each charge already shows up individually via
+      // the loop above — e.g. a "Manual Pickup Charges Aug' 26" item already
+      // IS the manualCharge total, so adding a second "Manual Charge" line
+      // here would double the amount for the same charge.
+      if(entry.manualCharge) lines.push({ label:'Manual Charge', amount: Number(entry.manualCharge), type:'Manual Charge' });
+      if(entry.stdCharge) lines.push({ label:'Terminal/Pickup Charge', amount: Number(entry.stdCharge), type:'Terminal Charge' });
     }
-    // Manual Charges and Terminal/Pickup Charges are plain numeric columns on
-    // the entry, not itemized labels — without these, a search for "manual"
-    // or "terminal charge" would silently find nothing even when the entry
-    // genuinely has one, which is exactly the confusing gap this search was
-    // built to avoid for adjustments/items.
-    if(entry.manualCharge) lines.push({ label:'Manual Charge', amount: Number(entry.manualCharge), type:'Manual Charge' });
-    if(entry.stdCharge) lines.push({ label:'Terminal/Pickup Charge', amount: Number(entry.stdCharge), type:'Terminal Charge' });
     for(const line of lines){
       if(typeFilter && typeFilter !== 'ALL' && line.type !== typeFilter) continue;
       if(q && !line.label.toLowerCase().includes(q) && !line.type.toLowerCase().includes(q) && !company.toLowerCase().includes(q)) continue;
@@ -2222,20 +2232,22 @@ function drawManualInvoicePage(pdf, inv, logo){
   ops += pdfRect(0, H-6, W, 6, PDF_COLOR.maroon);
 
   let y = H-40;
+  const LOGO_BOX_H = 56; // standardized logo size across every generated PDF — see also buildStatementPreviewHtml's signature banner and renderPdfDocument's brand mark
+  const LOGO_TEXT_X = M + LOGO_BOX_H + 4;
   if(logo){
-    const boxH = 42, boxW = boxH * (logo.width/logo.height);
+    const boxH = LOGO_BOX_H, boxW = boxH * (logo.width/logo.height);
     if(!pdf.imageObjs['Im1']) pdf.addImageXObject('Im1', logo.bytes, logo.width, logo.height);
     ops += `q ${boxW.toFixed(2)} 0 0 ${boxH.toFixed(2)} ${(M-6).toFixed(2)} ${(y-boxH+6).toFixed(2)} cm /Im1 Do Q\n`;
   } else {
-    ops += pdfRect(M-6, y-28, 42, 26, PDF_COLOR.maroon);
-    ops += pdfTextCenter(M-6+21, y-16, 'NSS', 'F2', 10, PDF_COLOR.white);
+    ops += pdfRect(M-6, y-LOGO_BOX_H+28, LOGO_BOX_H, LOGO_BOX_H-16, PDF_COLOR.maroon);
+    ops += pdfTextCenter(M-6+LOGO_BOX_H/2, y-LOGO_BOX_H/2+18, 'NSS', 'F2', 13, PDF_COLOR.white);
   }
-  ops += pdfText(M+46, y, 'NSS IT SOLUTION SDN BHD', 'F2', 15, PDF_COLOR.maroon);
-  ops += pdfText(M+46, y-15, inv.terminalName, 'F1', 9.5, PDF_COLOR.black);
-  ops += pdfText(M+46, y-27, inv.terminalCity+', Malaysia', 'F1', 9, PDF_COLOR.gray);
+  ops += pdfText(LOGO_TEXT_X, y, 'NSS IT SOLUTION SDN BHD', 'F2', 15, PDF_COLOR.maroon);
+  ops += pdfText(LOGO_TEXT_X, y-15, inv.terminalName, 'F1', 9.5, PDF_COLOR.black);
+  ops += pdfText(LOGO_TEXT_X, y-27, inv.terminalCity+', Malaysia', 'F1', 9, PDF_COLOR.gray);
   ops += pdfTextRightAt(W-M, y-4, 'INVOICE', 'F2', 22, PDF_COLOR.black);
 
-  y -= 50;
+  y -= (LOGO_BOX_H + 8);
   ops += pdfRect(M, y, tableW, 4, PDF_COLOR.maroon);
   y -= 22;
 
@@ -2888,8 +2900,8 @@ function adminLedgerHtml(){
 // operator-code filters above, since a refund search shouldn't require
 // first guessing the right date range.
 function adjustmentsSearchPanelHtml(){
-  const hasFilter = VIEW.adjSearchQuery.trim() || VIEW.adjSearchType !== 'ALL';
-  const allResults = hasFilter ? searchAdjustments(VIEW.adjSearchQuery, VIEW.adjSearchType) : [];
+  const hasFilter = VIEW.adjSearchQuery.trim() || VIEW.adjSearchType !== 'ALL' || VIEW.adjDateFrom || VIEW.adjDateTo;
+  const allResults = hasFilter ? searchAdjustments(VIEW.adjSearchQuery, VIEW.adjSearchType, VIEW.adjDateFrom, VIEW.adjDateTo) : [];
   const total = allResults.reduce((s,r)=>s+r.amount, 0);
   const RESULT_CAP = 300; // keep the rendered table from getting huge on a very broad search
   const results = allResults.slice(0, RESULT_CAP);
@@ -2897,15 +2909,18 @@ function adjustmentsSearchPanelHtml(){
   return `
     <div class="card panel" style="margin-bottom:16px;">
       <div class="panel-head"><h3>Search Deductions &amp; Refunds</h3></div>
-      <div class="desc" style="margin-bottom:10px;">Find every operator with a refund, RFID charge, or other manually-added adjustment — across all dates, not just the range above.</div>
+      <div class="desc" style="margin-bottom:10px;">Find every operator with a refund, RFID charge, or other manually-added adjustment — across all dates by default; add a date range below to narrow it.</div>
       <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
         <input type="text" id="adjSearchQuery" placeholder="Search by operator, label… e.g. SANI or refund" value="${esc(VIEW.adjSearchQuery)}" style="flex:1.5; min-width:200px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--ink);">
         <select id="adjSearchType" style="padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--ink);">
           <option value="ALL" ${VIEW.adjSearchType==='ALL'?'selected':''}>All types</option>
           ${ADJUSTMENT_TYPES.map(t=>`<option value="${t}" ${VIEW.adjSearchType===t?'selected':''}>${t}</option>`).join('')}
         </select>
+        <input type="date" id="adjDateFrom" value="${VIEW.adjDateFrom}" title="From date" style="padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--ink);">
+        <input type="date" id="adjDateTo" value="${VIEW.adjDateTo}" title="Until date" style="padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--ink);">
+        ${(VIEW.adjDateFrom||VIEW.adjDateTo) ? `<button class="btn btn-sm" id="btn-adj-clear-dates">Clear dates</button>` : ''}
       </div>
-      ${!hasFilter ? `<div style="font-size:12.5px; color:var(--ink-faint);">Type a keyword or pick a type above to search.</div>` : results.length ? `
+      ${!hasFilter ? `<div style="font-size:12.5px; color:var(--ink-faint);">Type a keyword, pick a type, or set a date range above to search.</div>` : results.length ? `
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:12.5px; color:var(--ink-faint);">
           <span>${allResults.length} match(es)${truncated ? ` — showing first ${RESULT_CAP}, narrow your search to see the rest` : ''}</span>
           <span style="font-weight:700; color:var(--ink);">Total (all matches): ${fmtMoney(total)}</span>
@@ -3906,6 +3921,12 @@ function wireMain(actor, effectiveOp){
   });
   const adjSearchType = document.getElementById('adjSearchType');
   if(adjSearchType) adjSearchType.addEventListener('change', ()=>{ VIEW.adjSearchType = adjSearchType.value; renderMain(); });
+  const adjDateFrom = document.getElementById('adjDateFrom');
+  if(adjDateFrom) adjDateFrom.addEventListener('change', ()=>{ VIEW.adjDateFrom = adjDateFrom.value; renderMain(); });
+  const adjDateTo = document.getElementById('adjDateTo');
+  if(adjDateTo) adjDateTo.addEventListener('change', ()=>{ VIEW.adjDateTo = adjDateTo.value; renderMain(); });
+  const adjClearDates = document.getElementById('btn-adj-clear-dates');
+  if(adjClearDates) adjClearDates.addEventListener('click', ()=>{ VIEW.adjDateFrom = ''; VIEW.adjDateTo = ''; renderMain(); });
 
   const reconcileSearch = document.getElementById('reconcileSearch');
   if(reconcileSearch) reconcileSearch.addEventListener('input', ()=>{
@@ -5494,13 +5515,13 @@ function buildStatementPreviewHtml(g){
   for(const e of sorted){ for(const k of Object.keys(e.items||{})){ const t=k.trim(); if(t && !itemKeys.includes(t)) itemKeys.push(t); } }
 
   const NAVY='#0F2B3D', TEAL='#0E9FB8', GRAY='#667884', LIGHT='#E9F7FA', BORDER='#D7DEE2';
-  // !important here because the app's own global `th{ background: ... !important }`
-  // rule (added for the main data tables elsewhere) would otherwise clobber this
-  // preview's navy header background, leaving white header text invisible against
-  // whatever the app's surface color is. The actual sent email is a standalone
-  // HTML document and is never subject to the app's CSS, so this only matters
-  // for the in-app preview modal.
-  const th = (v) => `<th style="padding:7px 9px !important; border:1px solid ${NAVY} !important; background:${NAVY} !important; color:#fff !important; font-size:12px !important; font-weight:700 !important; text-align:left !important; text-transform:none !important; letter-spacing:normal !important; height:auto !important; white-space:nowrap;">${v}</th>`;
+  // Deliberately a <td>, not a <th>: real inboxes (Outlook's Word rendering
+  // engine especially) apply their own default header styling to <th>/<thead>
+  // that can silently override inline styles — the same white-text-on-white
+  // symptom showed up in an actual received email, not just the in-app
+  // preview modal. A plain <td> with the same look sidesteps that entirely,
+  // in every client and in this preview alike.
+  const th = (v) => `<td style="padding:7px 9px; border:1px solid ${NAVY}; background:${NAVY}; color:#ffffff; font-size:12px; font-weight:700; text-align:left; white-space:nowrap;">${v}</td>`;
   const td = (v, align='left') => `<td style="padding:6px 9px !important; border:1px solid ${BORDER} !important; text-align:${align} !important; font-size:13px !important; color:#000 !important; height:auto !important; white-space:nowrap;">${v}</td>`;
   const intro = esc(tpl.intro_text).replace('{terminal}', esc(terminalName)).replace('{date}', dateLabel);
   const headers = ['No.','Date','Company','Sales Report', ...itemKeys, 'Final'];
@@ -5524,8 +5545,10 @@ function buildStatementPreviewHtml(g){
       <p>${esc(tpl.greeting)}</p>
       <p>${intro}</p>
       <table style="border-collapse:collapse; width:100%; margin:14px 0;">
-        <thead><tr>${headers.map(th).join('')}</tr></thead>
-        <tbody>${bodyRows}</tbody>
+        <tbody>
+          <tr>${headers.map(th).join('')}</tr>
+          ${bodyRows}
+        </tbody>
       </table>
       <table style="border-collapse:collapse; margin-bottom:16px;"><tr style="background:${LIGHT};">
         <td style="padding:9px 16px; font-weight:700; font-size:11.5pt; color:${NAVY};">FINAL AMOUNT (RM)</td>
