@@ -828,14 +828,14 @@ async function cloudLoadAll(){
       if(!code) continue;
       const existing = STATE.operators.find(x => x.terminal === code && x.company === o.company);
       if(existing){
-        existing.id = o.id; existing.email = o.email; existing.altEmail = o.alt_email||''; existing.active = o.active !== false; existing.invoiceSeq = o.invoice_seq; existing.defaultTosRate = Number(o.default_tos_rate)||10; existing.companyName = o.company_name||''; existing.companyAddress = o.company_address||'';
+        existing.id = o.id; existing.email = o.email; existing.altEmail = o.alt_email||''; existing.active = o.active !== false; existing.invoiceSeq = o.invoice_seq; existing.defaultTosRate = Number(o.default_tos_rate)||10; existing.companyName = o.company_name||''; existing.companyAddress = o.company_address||''; existing.notifyEmail = o.notify_email||''; existing.notifyEmailCc = o.notify_email_cc||'';
         // Every operator now has a real Supabase Auth login (backfilled). Clear
         // any stale pre-cloud local password so the app stops treating this
         // operator as a "legacy local-only" account (which broke Reset Password
         // and the Company Info warning for operators that predate the cloud).
         existing.passwordHash = null; existing.mustChange = false; delete existing.tempPasswordPlain;
       }
-      else STATE.operators.push({ id: o.id, terminal: code, company: o.company, email: o.email, altEmail: o.alt_email||'', passwordHash: null, mustChange:false, active: o.active !== false, invoiceSeq: o.invoice_seq, defaultTosRate: Number(o.default_tos_rate)||10, companyName: o.company_name||'', companyAddress: o.company_address||'' });
+      else STATE.operators.push({ id: o.id, terminal: code, company: o.company, email: o.email, altEmail: o.alt_email||'', passwordHash: null, mustChange:false, active: o.active !== false, invoiceSeq: o.invoice_seq, defaultTosRate: Number(o.default_tos_rate)||10, companyName: o.company_name||'', companyAddress: o.company_address||'', notifyEmail: o.notify_email||'', notifyEmailCc: o.notify_email_cc||'' });
     }
 
     try{
@@ -5391,6 +5391,7 @@ function sendStatementRowHtml(e){
 }
 
 function adminSendStatementsHtml(){
+  if(!EMAIL_TEMPLATE) ensureEmailTemplateLoaded().then(()=>{ if(VIEW.route==='sendstatements') renderMain(); });
   const terminalId = TERMINAL_IDS[VIEW.sendStatements.terminal];
   const key = terminalId ? terminalId+'|'+VIEW.sendStatements.date : null;
   const loaded = terminalId && SEND_STATEMENTS_LOADED_KEY === key;
@@ -5417,6 +5418,8 @@ function adminSendStatementsHtml(){
         </select>
         <input type="date" id="sendDateSel" class="btn btn-sm" value="${VIEW.sendStatements.date}">
         <label class="btn btn-sm" style="cursor:pointer;">Import Notification Emails<input type="file" id="sendImportEmails" accept=".xlsx" style="display:none;"></label>
+        <button class="btn btn-sm" id="btn-manage-all-emails">Manage All Operator Emails</button>
+        <button class="btn btn-sm" id="btn-edit-email-template">Edit Email Template</button>
         <button class="btn btn-accent btn-sm" id="btn-send-selected" ${!selectedIds.length?'disabled':''}>Send Selected (${selectedIds.length})</button>
       </div>
     </div>
@@ -5436,9 +5439,33 @@ function adminSendStatementsHtml(){
 
 // Renders the same content the Edge Function will actually send, so an
 // admin can sanity-check a statement before it goes out.
+// Colors/hierarchy lifted 1:1 from the original Word template's run
+// properties (word/document.xml): teal eyebrow #0E9FB8, navy title/labels
+// #0F2B3D, gray subtext #667884, table header fill #0F2B3D, final-amount
+// box fill #E9F7FA. This is the same builder logic the Edge Function uses
+// server-side (send-settlement-email/index.ts) — kept in sync by hand since
+// one runs in Deno and one in the browser, but both read the same
+// EMAIL_TEMPLATE row so wording always matches exactly.
+const EMAIL_TPL_DEFAULT = {
+  greeting: 'Dear Sir/Madam,',
+  intro_text: 'We are pleased to inform you that this is the Daily Settlement for {terminal} for the date of {date}. Thank you.',
+  reminder_text: 'Please ensure any outstanding are settled within two (2) weeks from the settlement date.',
+  contact_email: 'finance.nssit@gohub.com.my',
+  signature_name: 'FINANCE OPERATION',
+  signature_company: 'NSS IT Solution Sdn Bhd',
+};
+let EMAIL_TEMPLATE = null; // loaded lazily on first visit to Send Statements
+
+async function ensureEmailTemplateLoaded(){
+  if(EMAIL_TEMPLATE || !window.GoStatementLive) return;
+  try{ EMAIL_TEMPLATE = await GoStatementLive.loadEmailTemplate() || { ...EMAIL_TPL_DEFAULT }; }
+  catch(e){ console.error('loadEmailTemplate failed', e); EMAIL_TEMPLATE = { ...EMAIL_TPL_DEFAULT }; }
+}
+
 function buildStatementPreviewHtml(e){
   const op = e.operators||{};
   const items = e.items||{};
+  const tpl = EMAIL_TEMPLATE || EMAIL_TPL_DEFAULT;
   const terminalName = SEND_TERMINAL_FULL_NAME[VIEW.sendStatements.terminal]||VIEW.sendStatements.terminal;
   const dateLabel = fmtSlashDate(e.entry_date, false);
   const row = {
@@ -5448,38 +5475,125 @@ function buildStatementPreviewHtml(e){
     parkingRefund: pickItemValue(items,'Parking Charges Refund'),
     undersales: pickItemValue(items,'Undersales') || Number(e.undersales)||0,
   };
-  const td = (v, align='left') => `<td style="padding:6px 8px; border:1px solid #ccc; text-align:${align};">${v}</td>`;
+  const NAVY='#0F2B3D', TEAL='#0E9FB8', GRAY='#667884', LIGHT='#E9F7FA', BORDER='#D7DEE2';
+  const th = (v) => `<th style="padding:7px 9px; border:1px solid ${NAVY}; background:${NAVY}; color:#fff; font-size:12px; font-weight:700; text-align:left;">${v}</th>`;
+  const td = (v, align='left') => `<td style="padding:6px 9px; border:1px solid ${BORDER}; text-align:${align}; font-size:13px; color:#000;">${v}</td>`;
+  const intro = esc(tpl.intro_text).replace('{terminal}', esc(terminalName)).replace('{date}', dateLabel);
   return `
     <h3>Preview — ${esc(op.company||'')}</h3>
     <span class="sub">To: ${esc(op.notify_email||'(no email set)')}${op.notify_email_cc?` · CC: ${esc(op.notify_email_cc)}`:''}</span>
-    <div style="border:1px solid var(--border); border-radius:10px; padding:16px; margin-top:12px; max-height:60vh; overflow:auto; background:#fff; color:#111; font-family:Calibri,Arial,sans-serif;">
-      <h2 style="margin:0 0 2px;">DAILY SETTLEMENT STATEMENT</h2>
-      <div style="font-weight:600; margin-bottom:14px;">${esc(terminalName)}</div>
-      <div style="font-weight:600; margin-bottom:10px;">Detail Breakdown for Daily Settlement</div>
-      <div><b>Bus Operator</b> : ${esc(op.company||'')}</div>
-      <div style="margin-bottom:14px;"><b>Settlement Date</b> : ${dateLabel}</div>
-      <p>Dear Sir/Madam,</p>
-      <p>We are pleased to inform you that this is the Daily Settlement for ${esc(terminalName)} for the date of ${dateLabel}. Thank you.</p>
-      <table style="border-collapse:collapse; width:100%; margin:14px 0; font-size:12.5px;">
-        <thead><tr style="background:#1F4E79; color:#fff;">
-          ${['No.','Date','Company','Sales Report','Terminal Charges','Pickup Charges','Parking Charges','Parking Charges Refund','Undersales','Final'].map(h=>`<th style="padding:6px 8px; border:1px solid #ccc;">${h}</th>`).join('')}
-        </tr></thead>
+    <div style="border:1px solid var(--border); border-radius:10px; padding:20px; margin-top:12px; max-height:60vh; overflow:auto; background:#fff; color:#000; font-family:Calibri,'Segoe UI',Arial,sans-serif;">
+      <div style="font-weight:700; font-size:9pt; letter-spacing:.04em; color:${TEAL}; margin-bottom:6px;">DAILY SETTLEMENT STATEMENT</div>
+      <div style="font-weight:700; font-size:20px; color:${NAVY}; margin-bottom:12px;">${esc(terminalName)}</div>
+      <div style="color:${GRAY}; font-weight:600; margin-bottom:10px;">Detail Breakdown for Daily Settlement</div>
+      <div style="color:${GRAY};"><b>Bus Operator</b>&emsp;: ${esc(op.company||'')}</div>
+      <div style="color:${GRAY}; margin-bottom:14px;"><b>Settlement Date</b>&emsp;: ${dateLabel}</div>
+      <p>${esc(tpl.greeting)}</p>
+      <p>${intro}</p>
+      <table style="border-collapse:collapse; width:100%; margin:14px 0;">
+        <thead><tr>${['No.','Date','Company','Sales Report','Terminal Charges','Pickup Charges','Parking Charges','Parking Charges Refund','Undersales','Final'].map(th).join('')}</tr></thead>
         <tbody><tr>
           ${td('1','center')}${td(dateLabel)}${td(esc(op.company||''))}
           ${td(pvMoney(e.sales),'right')}${td(pvMoney(row.terminalCharges),'right')}${td(pvMoney(row.pickupCharges),'right')}
           ${td(pvMoney(row.parkingCharges),'right')}${td(pvMoney(row.parkingRefund),'right')}${td(pvMoney(row.undersales),'right')}${td(pvMoney(e.final_amount),'right')}
         </tr></tbody>
       </table>
-      <table style="border-collapse:collapse; margin-bottom:16px;"><tr style="background:#1F4E79; color:#fff;">
-        <td style="padding:8px 14px; font-weight:700;">FINAL AMOUNT (RM)</td>
-        <td style="padding:8px 14px; font-weight:700; text-align:right;">${pvMoney(e.final_amount)}</td>
+      <table style="border-collapse:collapse; margin-bottom:16px;"><tr style="background:${LIGHT};">
+        <td style="padding:9px 16px; font-weight:700; font-size:11.5pt; color:${NAVY};">FINAL AMOUNT (RM)</td>
+        <td style="padding:9px 16px; font-weight:700; font-size:11.5pt; color:${NAVY}; text-align:right;">${pvMoney(e.final_amount)}</td>
       </tr></table>
-      <p>Reminder: Please ensure any outstanding are settled within two (2) weeks from the settlement date.</p>
-      <p>Kindly feedback or inform any inquiry to this email finance.nssit@gohub.com.my</p>
-      <p>Best regards,<br>FINANCE OPERATION<br>NSS IT Solution Sdn Bhd</p>
+      <p><b>Reminder:</b> ${esc(tpl.reminder_text)}</p>
+      <p>Kindly feedback or inform any inquiry to this email <a href="mailto:${esc(tpl.contact_email)}" style="color:${NAVY};">${esc(tpl.contact_email)}</a></p>
+      <p>Best regards,<br><b style="color:${NAVY};">${esc(tpl.signature_name)}</b><br><span style="color:${GRAY};">${esc(tpl.signature_company)}</span></p>
     </div>
     <div class="modal-actions"><button class="btn" id="previewClose">Close</button></div>
   `;
+}
+
+function openEmailTemplateModal(){
+  const tpl = EMAIL_TEMPLATE || EMAIL_TPL_DEFAULT;
+  openModal(`
+    <h3>Edit Email Template</h3>
+    <span class="sub">This wording is used for every "Daily Settlement Statement" email — preview and actual sends always match. Use {terminal} and {date} as placeholders in the intro line.</span>
+    <form id="emailTplForm">
+      <div class="field"><label>Greeting</label><input type="text" id="tplGreeting" value="${esc(tpl.greeting)}"></div>
+      <div class="field"><label>Intro line</label><textarea id="tplIntro" rows="2">${esc(tpl.intro_text)}</textarea></div>
+      <div class="field"><label>Reminder text</label><textarea id="tplReminder" rows="2">${esc(tpl.reminder_text)}</textarea></div>
+      <div class="field"><label>Contact email</label><input type="email" id="tplContact" value="${esc(tpl.contact_email)}"></div>
+      <div class="field"><label>Signature name</label><input type="text" id="tplSigName" value="${esc(tpl.signature_name)}"></div>
+      <div class="field"><label>Signature company</label><input type="text" id="tplSigCompany" value="${esc(tpl.signature_company)}"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="tplCancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  `);
+  document.getElementById('tplCancel').addEventListener('click', closeModal);
+  document.getElementById('emailTplForm').addEventListener('submit', async (ev)=>{
+    ev.preventDefault();
+    const patch = {
+      greeting: document.getElementById('tplGreeting').value.trim(),
+      intro_text: document.getElementById('tplIntro').value.trim(),
+      reminder_text: document.getElementById('tplReminder').value.trim(),
+      contact_email: document.getElementById('tplContact').value.trim(),
+      signature_name: document.getElementById('tplSigName').value.trim(),
+      signature_company: document.getElementById('tplSigCompany').value.trim(),
+    };
+    try{
+      const saved = await GoStatementLive.saveEmailTemplate(tpl.id, patch);
+      EMAIL_TEMPLATE = saved;
+      closeModal();
+      toast('Email template saved.');
+    }catch(err){ toast('Save failed: ' + err.message); }
+  });
+}
+
+// Lists EVERY operator for the selected terminal (not just ones with an
+// entry on the selected date), so a newly-added operator's email can be set
+// before their first settlement even exists — the date-scoped table above
+// can't show them since they have no entry to attach the row to yet.
+function openManageAllEmailsModal(){
+  const terminal = VIEW.sendStatements.terminal;
+  const ops = STATE.operators.filter(o=>o.terminal===terminal && o.active!==false).sort((a,b)=>a.company.localeCompare(b.company));
+  openModal(`
+    <h3>Manage Operator Emails — ${esc(TERMINALS[terminal].name)}</h3>
+    <span class="sub">${ops.length} operator(s). Changes save immediately per row.</span>
+    <div style="max-height:60vh; overflow:auto; margin-top:12px;">
+      <table>
+        <thead><tr><th style="text-align:left;">Company</th><th style="text-align:left;">Notification Email</th><th style="text-align:left;">CC</th></tr></thead>
+        <tbody>
+          ${ops.map(o=>`
+            <tr>
+              <td style="text-align:left; font-weight:600;">${esc(o.company)}</td>
+              <td style="text-align:left;"><input type="email" class="btn btn-sm" data-mall-email="${o.id}" value="${esc(o.notifyEmail||'')}" placeholder="recipient email" style="width:220px;"></td>
+              <td style="text-align:left;"><input type="email" class="btn btn-sm" data-mall-cc="${o.id}" value="${esc(o.notifyEmailCc||'')}" placeholder="cc (optional)" style="width:200px;"></td>
+            </tr>`).join('') || `<tr><td colspan="3" style="text-align:center; color:var(--ink-faint); padding:16px;">No operators for this terminal.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    <div class="modal-actions"><button class="btn" id="mallClose">Close</button></div>
+  `);
+  document.getElementById('mallClose').addEventListener('click', closeModal);
+  document.querySelectorAll('[data-mall-email]').forEach(inp=>{
+    inp.addEventListener('change', async ()=>{
+      const opId = inp.getAttribute('data-mall-email');
+      try{
+        await GoStatementLive.updateOperator(opId, { notify_email: inp.value.trim() || null });
+        const op = STATE.operators.find(o=>o.id===opId); if(op) op.notifyEmail = inp.value.trim() || null;
+        toast('Email updated.');
+      }catch(err){ toast('Failed: '+err.message); }
+    });
+  });
+  document.querySelectorAll('[data-mall-cc]').forEach(inp=>{
+    inp.addEventListener('change', async ()=>{
+      const opId = inp.getAttribute('data-mall-cc');
+      try{
+        await GoStatementLive.updateOperator(opId, { notify_email_cc: inp.value.trim() || null });
+        const op = STATE.operators.find(o=>o.id===opId); if(op) op.notifyEmailCc = inp.value.trim() || null;
+        toast('CC updated.');
+      }catch(err){ toast('Failed: '+err.message); }
+    });
+  });
 }
 
 async function sendStatementsBatch(entryIds){
@@ -5583,6 +5697,13 @@ function wireSendStatements(actor, effectiveOp){
   if(dateSel) dateSel.addEventListener('change', ()=>{ VIEW.sendStatements.date = dateSel.value; VIEW.sendStatements.selected = {}; SEND_STATEMENTS_LOADED_KEY = null; renderMain(); });
   const retryBtn = document.getElementById('btn-send-retry');
   if(retryBtn) retryBtn.addEventListener('click', ()=>{ SEND_STATEMENTS_LOAD_ERROR = null; SEND_STATEMENTS_LOADED_KEY = null; renderMain(); });
+  const manageAllBtn = document.getElementById('btn-manage-all-emails');
+  if(manageAllBtn) manageAllBtn.addEventListener('click', openManageAllEmailsModal);
+  const editTplBtn = document.getElementById('btn-edit-email-template');
+  if(editTplBtn) editTplBtn.addEventListener('click', async ()=>{
+    await ensureEmailTemplateLoaded();
+    openEmailTemplateModal();
+  });
 
   const selectAll = document.getElementById('sendSelectAll');
   if(selectAll) selectAll.addEventListener('change', ()=>{

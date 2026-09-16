@@ -288,6 +288,19 @@
     return (data || []).sort((a, b) => (a.operators?.company || "").localeCompare(b.operators?.company || ""));
   }
 
+  // The single editable-content row for the settlement email — read by both
+  // the in-app preview and the Edge Function, so they're always in sync.
+  async function loadEmailTemplate() {
+    const { data, error } = await db.from("email_templates").select("*").limit(1).maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+  async function saveEmailTemplate(id, patch) {
+    const { data, error } = await db.from("email_templates").update(patch).eq("id", id).select().single();
+    if (error) throw error;
+    return data;
+  }
+
   // Triggers the send-settlement-email Edge Function, which builds the
   // "Daily Settlement Statement" email from each entry's data and sends it
   // through Microsoft Graph as the connected Outlook mailbox.
@@ -543,7 +556,7 @@
     listAdmins, listAdminsWithEmail, inviteAdmin, setAdminActive, deleteAdmin, updateAdminPermissions,
     // entries
     loadEntries, getEntry, saveEntry, setEntryStatus, bulkSetStatus, deleteEntry,
-    loadEntriesForDate, sendSettlementEmails,
+    loadEntriesForDate, sendSettlementEmails, loadEmailTemplate, saveEmailTemplate,
     // manual invoice + trip list
     loadManualInvoices, loadManualTripEntries, saveManualInvoice, saveManualTripEntries, deleteManualInvoice,
     // statements (undersales / compensation / refund / other charges)
