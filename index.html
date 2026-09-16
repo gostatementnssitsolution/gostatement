@@ -615,7 +615,27 @@ async function ensureSeed(){
   STATE = { admins, operators, entries: {} };
   persist();
 }
-function persist(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE)); }
+// Writing the FULL state (STATE.entries alone is now 9,600+ real settlement
+// rows) to localStorage on every single click — persist() used to do this
+// synchronously, every time — is what made the app feel slow after the
+// historical ledger migration. Two fixes:
+//  1. When connected to the cloud, `entries` is always re-hydrated from
+//     Supabase on the next login/boot anyway (cloudLoadAll), so there's no
+//     need to also duplicate 9,600+ rows into localStorage on every action —
+//     only admins/operators (small) get persisted locally in that case.
+//  2. Debounce the actual write so a burst of rapid state changes (e.g.
+//     several persist() calls in one handler) collapses into a single
+//     localStorage.setItem, instead of one per call.
+let __persistTimer = null;
+function persist(){
+  if(__persistTimer) clearTimeout(__persistTimer);
+  __persistTimer = setTimeout(()=>{
+    __persistTimer = null;
+    const toSave = window.GoStatementLive ? { ...STATE, entries: {} } : STATE;
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave)); }
+    catch(err){ console.error('GoStatement: persist failed', err); }
+  }, 150);
+}
 
 /* ============================================================
    CLOUD BRIDGE — Supabase (real backend). Falls back to pure
@@ -1540,7 +1560,7 @@ function rowDeductionsAdditions(terminal, company, date, row){
   if(items && Object.keys(items).length){
     for(const [label,v] of Object.entries(items)){
       if(!v) continue;
-      (v < 0 ? deductions : additions).push({ label, amount: v });
+      (v < 0 ? deductions : additions).push({ label, amount: v, type: guessAdjustmentType(label) });
     }
   } else {
     if(row[3]) deductions.push({ label:'Terminal / pickup charges', amount: row[3] });
@@ -1549,29 +1569,56 @@ function rowDeductionsAdditions(terminal, company, date, row){
   }
   for(const adj of adjustments){
     if(!adj.amount) continue;
-    (adj.amount < 0 ? deductions : additions).push({ label: adj.label || 'Adjustment', amount: adj.amount, type: adj.type || 'Other' });
+    (adj.amount < 0 ? deductions : additions).push({ label: adj.label || 'Adjustment', amount: adj.amount, type: adj.type || guessAdjustmentType(adj.label) });
   }
   return { deductions, additions, hasItems: !!(items && Object.keys(items).length), note: entry && entry.note };
 }
 
-// Scans every manually-added deduction/addition across ALL operators, ALL
-// terminals, ALL dates (not scoped to whatever date-range filter the ledger
-// happens to be on) — so admin can type "refund" and immediately see every
-// operator that was ever refunded, instead of opening each ledger row one
-// by one. Matches on label text, type, or operator/company code.
+// Best-effort type for a line item that predates the Type dropdown (either
+// an Excel-imported itemized charge, or an adjustment added before this
+// feature existed) — guessed from its label so old data still shows up
+// under a sensible category instead of just "Other".
+function guessAdjustmentType(label){
+  const l = (label||'').toLowerCase();
+  if(l.includes('refund')) return 'Refund';
+  if(l.includes('rfid')) return 'RFID Charge';
+  if(l.includes('undersale')) return 'Undersales';
+  if(l.includes('penalt')) return 'Penalty';
+  if(l.includes('correct') || l.includes('compensat')) return 'Correction';
+  return 'Other';
+}
+
+// Scans every deduction/addition across ALL operators, ALL terminals, ALL
+// dates (not scoped to whatever date-range filter the ledger happens to be
+// on) — so admin can type "refund" and immediately see every operator that
+// was ever refunded, instead of opening each ledger row one by one. Covers
+// BOTH sources a line item can come from: the manually-added `adjustments`
+// list (has an explicit Type), and Excel-imported itemized `items` (e.g.
+// "Parking Charges Refund") which never had a Type field — those get a
+// best-guess type from their label instead of being invisible to search.
 function searchAdjustments(query, typeFilter){
   const q = (query||'').trim().toLowerCase();
   const results = [];
   for(const key in STATE.entries){
     const entry = STATE.entries[key];
-    if(!entry.adjustments || !entry.adjustments.length) continue;
     const [terminal, company, date] = key.split('|');
-    for(const adj of entry.adjustments){
-      if(!adj.amount) continue;
-      const type = adj.type || 'Other';
-      if(typeFilter && typeFilter !== 'ALL' && type !== typeFilter) continue;
-      if(q && !(adj.label||'').toLowerCase().includes(q) && !type.toLowerCase().includes(q) && !company.toLowerCase().includes(q)) continue;
-      results.push({ terminal, company, date, type, label: adj.label || 'Adjustment', amount: Number(adj.amount) });
+    const lines = [];
+    if(entry.adjustments && entry.adjustments.length){
+      for(const adj of entry.adjustments){
+        if(!adj.amount) continue;
+        lines.push({ label: adj.label || 'Adjustment', amount: Number(adj.amount), type: adj.type || guessAdjustmentType(adj.label) });
+      }
+    }
+    if(entry.items && Object.keys(entry.items).length){
+      for(const [label, v] of Object.entries(entry.items)){
+        if(!v) continue;
+        lines.push({ label, amount: Number(v), type: guessAdjustmentType(label) });
+      }
+    }
+    for(const line of lines){
+      if(typeFilter && typeFilter !== 'ALL' && line.type !== typeFilter) continue;
+      if(q && !line.label.toLowerCase().includes(q) && !line.type.toLowerCase().includes(q) && !company.toLowerCase().includes(q)) continue;
+      results.push({ terminal, company, date, type: line.type, label: line.label, amount: line.amount });
     }
   }
   results.sort((a,b)=> a.date < b.date ? 1 : (a.date > b.date ? -1 : 0));
