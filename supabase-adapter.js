@@ -413,11 +413,71 @@
     if (error) throw error;
   }
 
+  /* ---------------- Statements (undersales / compensation / refund / other charges) ---------------- */
+
+  // filters: { terminalId, operatorId, dateFrom, dateTo, type }
+  async function loadStatements(filters = {}) {
+    let q = db
+      .from("statements")
+      .select("*, terminals(code, name), operators(company, email)")
+      .order("statement_date", { ascending: false });
+    if (filters.terminalId) q = q.eq("terminal_id", filters.terminalId);
+    if (filters.operatorId) q = q.eq("operator_id", filters.operatorId);
+    if (filters.dateFrom) q = q.gte("statement_date", filters.dateFrom);
+    if (filters.dateTo) q = q.lte("statement_date", filters.dateTo);
+    if (filters.type) q = q.eq("type", filters.type);
+    const { data, error } = await q;
+    if (error) throw error;
+    return data;
+  }
+
+  // row: { id?, terminalId, operatorId, type, statementNo, statementDate, periodFrom, periodTo,
+  //        amount, description, status }
+  async function saveStatement(row) {
+    const { data: { user } } = await db.auth.getUser();
+    const payload = {
+      id: row.id || undefined,
+      terminal_id: row.terminalId,
+      operator_id: row.operatorId,
+      type: row.type,
+      statement_no: row.statementNo,
+      statement_date: row.statementDate,
+      period_from: row.periodFrom || null,
+      period_to: row.periodTo || null,
+      amount: Number(row.amount || 0),
+      description: row.description || null,
+      status: row.status || "draft",
+      updated_by: user ? user.id : null
+    };
+    if (!row.id) payload.created_by = user ? user.id : null;
+    const { data, error } = await db
+      .from("statements")
+      .upsert(payload, { onConflict: "id" })
+      .select("*, terminals(code, name), operators(company, email)").single();
+    if (error) throw error;
+    return data;
+  }
+
+  async function setStatementStatus(id, status) {
+    const { data: { user } } = await db.auth.getUser();
+    const { data, error } = await db
+      .from("statements")
+      .update({ status, updated_by: user ? user.id : null })
+      .eq("id", id).select().single();
+    if (error) throw error;
+    return data;
+  }
+
+  async function deleteStatement(id) {
+    const { error } = await db.from("statements").delete().eq("id", id);
+    if (error) throw error;
+  }
+
   /* ---------------- Realtime ---------------- */
 
   // onChange(payload) fires on every INSERT/UPDATE/DELETE to settlement_entries,
-  // operators, manual_invoices or manual_trip_entries — call this once after
-  // login and re-render/reload from it.
+  // operators, manual_invoices, manual_trip_entries or statements — call this
+  // once after login and re-render/reload from it.
   function subscribeToChanges(onChange) {
     return db
       .channel("gostatement-live")
@@ -425,6 +485,7 @@
       .on("postgres_changes", { event: "*", schema: "public", table: "operators" }, onChange)
       .on("postgres_changes", { event: "*", schema: "public", table: "manual_invoices" }, onChange)
       .on("postgres_changes", { event: "*", schema: "public", table: "manual_trip_entries" }, onChange)
+      .on("postgres_changes", { event: "*", schema: "public", table: "statements" }, onChange)
       .subscribe();
   }
 
@@ -446,6 +507,8 @@
     loadEntries, getEntry, saveEntry, setEntryStatus, bulkSetStatus, deleteEntry,
     // manual invoice + trip list
     loadManualInvoices, loadManualTripEntries, saveManualInvoice, saveManualTripEntries, deleteManualInvoice,
+    // statements (undersales / compensation / refund / other charges)
+    loadStatements, saveStatement, setStatementStatus, deleteStatement,
     // realtime
     subscribeToChanges, unsubscribe
   };

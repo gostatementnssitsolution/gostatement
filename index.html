@@ -119,6 +119,15 @@
   .pill-accent{background:var(--accent-soft); color:var(--accent);}
   .pill-kt{background:var(--kt-soft); color:var(--kt-ink);}
   .pill-ms{background:var(--ms-soft); color:var(--ms-ink);}
+  .terminal-strip{display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:14px; margin-bottom:18px;}
+  .terminal-card{
+    display:flex; align-items:center; gap:14px; padding:14px 16px;
+    background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow);
+  }
+  .terminal-card svg{flex:none;}
+  .terminal-card .t-name{font-weight:700; font-size:14.5px;}
+  .terminal-card .t-sub{font-size:12px; color:var(--ink-faint); margin-top:2px;}
+  .terminal-badge-inline{display:inline-flex; vertical-align:middle; margin-right:8px;}
   .hidden{display:none !important;}
   .scrollx{overflow-x:auto;}
   table{border-collapse:collapse; width:100%; font-size:13.5px;}
@@ -795,6 +804,7 @@ const VIEW = {
   sortDir: 'desc',
   entryForm: { terminal:'KT', operatorId:null, date:null },
   manualInvoice: { terminal:'KT', period: new Date().toISOString().slice(0,7), operatorId:null, expandedId:null },
+  chargeStatements: { terminal:'KT', typeFilter:'ALL', expandedId:null },
   ledgerExpandedKey: null,
   selectedOperatorId: null, // which of MY_OPERATORS is active, for a multi-operator login
   adjSearchQuery: '',
@@ -1305,6 +1315,29 @@ function currentActor(){
   return op ? { type:'operator', op } : null;
 }
 function icon(path){ return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`; }
+// A small flat-style "bus terminal" illustration, recolored per terminal via
+// the existing --kt/--ms CSS accent vars — used to give each terminal a
+// visual identity in the Overview banner, Operator Directory and dashboards
+// instead of just a text pill.
+function terminalIllustrationSvg(code, size){
+  size = size || 56;
+  const accent = code==='KT' ? 'var(--kt)' : 'var(--ms)';
+  return `<svg width="${size}" height="${size}" viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <rect x="3" y="3" width="90" height="90" rx="20" fill="${accent}" fill-opacity="0.12"/>
+    <path d="M18 36l30-17 30 17v6H18z" fill="${accent}"/>
+    <rect x="22" y="42" width="52" height="26" rx="2.5" fill="var(--surface)" stroke="${accent}" stroke-opacity="0.35"/>
+    <rect x="28" y="48" width="11" height="11" rx="1.6" fill="${accent}" fill-opacity="0.55"/>
+    <rect x="42.5" y="48" width="11" height="11" rx="1.6" fill="${accent}" fill-opacity="0.55"/>
+    <rect x="57" y="48" width="11" height="11" rx="1.6" fill="${accent}" fill-opacity="0.55"/>
+    <rect x="40" y="60" width="16" height="8" rx="1.2" fill="${accent}"/>
+    <path d="M22 68h52v3a3 3 0 0 1-3 3H25a3 3 0 0 1-3-3z" fill="${accent}" fill-opacity="0.4"/>
+    <rect x="10" y="66" width="32" height="15" rx="3.5" fill="${accent}"/>
+    <rect x="14" y="70" width="9" height="7" rx="1.2" fill="#ffffff" fill-opacity="0.9"/>
+    <rect x="26" y="70" width="9" height="7" rx="1.2" fill="#ffffff" fill-opacity="0.9"/>
+    <circle cx="17" cy="82" r="3.6" fill="#2b2f36"/>
+    <circle cx="36" cy="82" r="3.6" fill="#2b2f36"/>
+  </svg>`;
+}
 const ICONS = {
   dashboard: icon('<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'),
   ledger: icon('<path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z"/><path d="M14 3v5h5"/><path d="M8 13h8M8 17h5"/>'),
@@ -1314,6 +1347,7 @@ const ICONS = {
   admins: icon('<path d="M12 2 4 5v6c0 5 3.4 8.7 8 11 4.6-2.3 8-6 8-11V5Z"/><path d="m9 12 2 2 4-4"/>'),
   reconcile: icon('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>'),
   invoice: icon('<path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z"/><path d="M14 2v5h5"/><path d="M8 12h4M8 16h8M8 8h2"/>'),
+  statement: icon('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M12 12v6M9 15h6"/>'),
 };
 
 // Grantable app sections for a scoped (non-super) admin. 'admins' isn't in
@@ -1326,6 +1360,7 @@ const PERMISSION_SECTIONS = [
   {key:'entry', label:'Daily Entry'},
   {key:'reconcile', label:'Reconciliation'},
   {key:'manualinvoice', label:'Manual Invoice'},
+  {key:'chargestatements', label:'Statements'},
 ];
 // Admins created before this feature existed (isSuperAdmin left undefined)
 // keep full access — only an explicit `false` scopes them down.
@@ -1340,6 +1375,7 @@ function navItemsFor(actor){
       {route:'entry', label:'Daily Entry', icon:ICONS.entry},
       {route:'reconcile', label:'Reconciliation', icon:ICONS.reconcile},
       {route:'manualinvoice', label:'Manual Invoice', icon:ICONS.invoice},
+      {route:'chargestatements', label:'Statements', icon:ICONS.statement},
       {route:'admins', label:'Admins', icon:ICONS.admins},
     ];
     return all.filter(item=>{
@@ -1351,6 +1387,7 @@ function navItemsFor(actor){
     {route:'dashboard', label:'Dashboard', icon:ICONS.dashboard},
     {route:'ledger', label:'Settlement Ledger', icon:ICONS.ledger},
     {route:'manualinvoice', label:'Manual Invoice', icon:ICONS.invoice},
+    {route:'chargestatements', label:'Statements', icon:ICONS.statement},
   ];
 }
 
@@ -2367,10 +2404,13 @@ function operatorDashboardHtml(op){
 
   return `
     <div id="topbar">
-      <div>
+      <div style="display:flex; align-items:center; gap:12px;">
+        ${terminalIllustrationSvg(op.terminal, 44)}
+        <div>
         <h1>Dashboard — ${esc(op.company)}</h1>
         <div class="desc"><span class="pill pill-${op.terminal.toLowerCase()}">${TERMINALS[op.terminal].name}</span> &middot; ${esc(op.email)}</div>
         ${(op.companyName || op.companyAddress) ? `<div class="desc" style="margin-top:2px;">${op.companyName ? `<b>${esc(op.companyName)}</b>` : ''}${op.companyName && op.companyAddress ? ' — ' : ''}${esc(op.companyAddress||'')}</div>` : ''}
+        </div>
       </div>
       <div class="topbar-actions">${rangeControlHtml(op.terminal)}<button class="btn btn-sm" id="btn-my-company-info">Edit Company Info</button><button class="btn btn-accent btn-sm" id="btn-gen-statement">Download Statement (PDF)</button></div>
     </div>
@@ -2560,6 +2600,17 @@ function adminOverviewHtml(){
         ${rangeControlHtml(terms[0])}
         <button class="btn btn-accent btn-sm" id="btn-terminal-statement">Generate Terminal Statement</button>
       </div>
+    </div>
+
+    <div class="terminal-strip">
+      ${terms.map(t=>`
+        <div class="terminal-card">
+          ${terminalIllustrationSvg(t, 52)}
+          <div>
+            <div class="t-name">${esc(TERMINALS[t].name)}</div>
+            <div class="t-sub">${STATE.operators.filter(o=>o.terminal===t && o.active!==false).length} active operator(s)</div>
+          </div>
+        </div>`).join('')}
     </div>
 
     <div class="kpi-grid">
@@ -3510,6 +3561,7 @@ function renderMain(){
     effectiveOp = actor.type==='operator' ? actor.op : findOperatorById(VIEW.viewingAsOperatorId);
     if(VIEW.route === 'ledger') html = operatorLedgerHtml(effectiveOp);
     else if(VIEW.route === 'manualinvoice') html = operatorManualInvoiceHtml(effectiveOp);
+    else if(VIEW.route === 'chargestatements') html = operatorChargeStatementsHtml(effectiveOp);
     else html = operatorDashboardHtml(effectiveOp);
   } else {
     // Defense in depth: a scoped admin can't reach a section they weren't
@@ -3522,6 +3574,7 @@ function renderMain(){
     else if(VIEW.route === 'entry') html = adminEntryHtml();
     else if(VIEW.route === 'reconcile') html = adminReconcileHtml();
     else if(VIEW.route === 'manualinvoice') html = adminManualInvoiceHtml();
+    else if(VIEW.route === 'chargestatements') html = adminChargeStatementsHtml();
     else if(VIEW.route === 'admins') html = adminUsersHtml();
     else html = adminOverviewHtml();
   }
@@ -4029,6 +4082,7 @@ function wireMain(actor, effectiveOp){
   });
 
   wireManualInvoice(actor, effectiveOp);
+  wireChargeStatements(actor, effectiveOp);
 }
 
 /* ============================================================
@@ -4737,6 +4791,331 @@ function wireManualInvoice(actor, effectiveOp){
         await GoStatementLive.deleteManualInvoice(btn.getAttribute('data-mi-delete'));
         toast('Invoice deleted.');
         await loadManualInvoicesForView();
+      }catch(err){ toast('Failed: '+err.message); }
+    });
+  });
+}
+
+/* ============================================================
+   STATEMENTS — Undersales / Compensation / Refund / Other Charges.
+   Ad-hoc charge/credit statements either admin OR the operator
+   themselves can raise, independent of the settlement ledger and
+   the TOS-specific Manual Invoice flow. Reuses the generic table
+   PDF writer (renderPdfDocument) used by the manual invoice summary.
+   ============================================================ */
+const STATEMENT_TYPES = {
+  undersales:    { label:'Undersales',    short:'UDS', badge:'pill-bad' },
+  compensation:  { label:'Compensation',  short:'CMP', badge:'pill-good' },
+  refund:        { label:'Refund',        short:'RFD', badge:'pill-accent' },
+  other_charges: { label:'Other Charges', short:'OTH', badge:'pill-neutral' },
+};
+// {TERM}-{TYPE}-{YYYYMMDD}-{4 random base36 chars} — unique enough for this
+// volume without a server round-trip to reserve a sequence number.
+function buildStatementNo(terminalCode, type, dateIso){
+  const d = new Date(dateIso+'T00:00:00');
+  const stamp = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  const short = (STATEMENT_TYPES[type]||{}).short || 'STM';
+  const rand = Array.from(crypto.getRandomValues(new Uint8Array(3))).map(b=>b.toString(36)).join('').slice(0,4).toUpperCase();
+  return `${terminalCode}-${short}-${stamp}-${rand}`;
+}
+
+let CHARGE_STATEMENTS_CACHE = [];
+let CHARGE_STATEMENTS_LOADED_KEY = null;
+let CHARGE_STATEMENTS_LOADING = false;
+let CHARGE_STATEMENTS_LOAD_ERROR = null;
+
+async function loadChargeStatementsForView(){
+  if(!window.GoStatementLive) return;
+  const terminalId = TERMINAL_IDS[VIEW.chargeStatements.terminal];
+  if(!terminalId) return; // terminal list hasn't synced from Supabase yet
+  if(CHARGE_STATEMENTS_LOADING) return;
+  const key = 'term|'+terminalId;
+  CHARGE_STATEMENTS_LOADING = true;
+  CHARGE_STATEMENTS_LOAD_ERROR = null;
+  try{
+    CHARGE_STATEMENTS_CACHE = await GoStatementLive.loadStatements({ terminalId });
+    CHARGE_STATEMENTS_LOADED_KEY = key;
+  }catch(err){
+    console.error('loadChargeStatementsForView failed', err);
+    CHARGE_STATEMENTS_LOAD_ERROR = err.message || 'Could not load statements.';
+  }
+  CHARGE_STATEMENTS_LOADING = false;
+  if(VIEW.route === 'chargestatements') renderMain();
+}
+
+function chargeStatementRowHtml(stmt, opts){
+  const type = STATEMENT_TYPES[stmt.type] || STATEMENT_TYPES.other_charges;
+  const expanded = VIEW.chargeStatements.expandedId === stmt.id;
+  const colspan = opts.showOperator ? 7 : 6;
+  return `
+    <tr>
+      ${opts.showOperator?`<td style="text-align:left;">${esc(stmt.operators?stmt.operators.company:'')}</td>`:''}
+      <td style="text-align:left;">${esc(stmt.statement_no)}</td>
+      <td><span class="pill ${type.badge}">${type.label}</span></td>
+      <td>${fmtDate(stmt.statement_date)}</td>
+      <td class="num" style="font-weight:700;">${fmtMoney(stmt.amount)}</td>
+      <td><span class="pill ${stmt.status==='finalized'?'pill-good':'pill-neutral'}">${stmt.status==='finalized'?'Finalized':'Draft'}</span></td>
+      <td style="text-align:right;">
+        <div style="display:flex; gap:6px; justify-content:flex-end; flex-wrap:wrap;">
+          <button class="btn btn-sm ${expanded?'btn-accent':''}" data-cs-toggle="${stmt.id}">${expanded?'Hide ▲':'View ▼'}</button>
+          <button class="btn btn-sm" data-cs-download="${stmt.id}">Download PDF</button>
+          ${opts.canManage?`<button class="btn btn-sm" data-cs-edit="${stmt.id}">Edit</button><button class="btn btn-sm" data-cs-toggle-status="${stmt.id}">${stmt.status==='finalized'?'Reopen':'Finalize'}</button><button class="btn btn-sm btn-danger" data-cs-delete="${stmt.id}">Delete</button>`:''}
+        </div>
+      </td>
+    </tr>
+    ${expanded?`<tr><td colspan="${colspan}" style="background:var(--surface-2); padding:0;"><div style="padding:16px 18px;">
+      <div class="sub" style="margin-bottom:6px;">${type.label}${stmt.period_from?` · Period: ${fmtDate(stmt.period_from)} – ${fmtDate(stmt.period_to||stmt.period_from)}`:''}</div>
+      <div>${stmt.description?esc(stmt.description).replace(/\n/g,'<br>'):'<span class="sub">No description provided.</span>'}</div>
+    </div></td></tr>`:''}
+  `;
+}
+
+function adminChargeStatementsHtml(){
+  const terminalId = TERMINAL_IDS[VIEW.chargeStatements.terminal];
+  const key = terminalId ? 'term|'+terminalId : null;
+  const loaded = terminalId && CHARGE_STATEMENTS_LOADED_KEY === key;
+  if(terminalId && !loaded && !CHARGE_STATEMENTS_LOADING) loadChargeStatementsForView();
+  const loading = !loaded;
+  let stmts = loaded ? CHARGE_STATEMENTS_CACHE : [];
+  if(VIEW.chargeStatements.typeFilter !== 'ALL') stmts = stmts.filter(s=>s.type===VIEW.chargeStatements.typeFilter);
+  const noTerminalYet = !terminalId;
+
+  let statusLine;
+  if(noTerminalYet) statusLine = `<span style="color:var(--bad);">Not connected to the cloud yet — <button class="btn btn-sm" id="btn-cs-retry-sync" style="padding:2px 8px;">Retry sync</button></span>`;
+  else if(CHARGE_STATEMENTS_LOAD_ERROR) statusLine = `<span style="color:var(--bad);">Failed to load: ${esc(CHARGE_STATEMENTS_LOAD_ERROR)} — <button class="btn btn-sm" id="btn-cs-retry-load" style="padding:2px 8px;">Retry</button></span>`;
+  else if(loading) statusLine = `<span style="color:var(--ink-faint);">Loading…</span>`;
+  else statusLine = `<span style="color:var(--ink-faint); font-size:12.5px;">${stmts.length} statement(s)</span>`;
+
+  return `
+    <div id="topbar">
+      <div><h1>Statements</h1><div class="desc">Undersales, Compensation, Refund &amp; Other Charges — generated by admin or the operator</div></div>
+      <div class="topbar-actions">
+        <select id="csTerminalSel" class="btn btn-sm">
+          <option value="KT" ${VIEW.chargeStatements.terminal==='KT'?'selected':''}>Kuala Terengganu Bus Terminal</option>
+          <option value="MS" ${VIEW.chargeStatements.terminal==='MS'?'selected':''}>Melaka Sentral</option>
+        </select>
+        <select id="csTypeFilter" class="btn btn-sm">
+          <option value="ALL" ${VIEW.chargeStatements.typeFilter==='ALL'?'selected':''}>All types</option>
+          ${Object.entries(STATEMENT_TYPES).map(([k,v])=>`<option value="${k}" ${VIEW.chargeStatements.typeFilter===k?'selected':''}>${v.label}</option>`).join('')}
+        </select>
+        <button class="btn btn-accent btn-sm" id="btn-cs-add">+ Generate Statement</button>
+      </div>
+    </div>
+    <div class="card table-card">
+      <div class="table-toolbar">${statusLine}</div>
+      <div class="scrollx">
+        <table>
+          <thead><tr><th style="text-align:left;">Operator</th><th style="text-align:left;">Statement No.</th><th>Type</th><th>Date</th><th>Amount</th><th>Status</th><th style="text-align:right;">Actions</th></tr></thead>
+          <tbody>
+            ${stmts.map(s=>chargeStatementRowHtml(s,{showOperator:true, canManage:true})).join('') || `<tr><td colspan="7" style="text-align:center; color:var(--ink-faint); padding:20px;">${loading?'Loading…':'No statements for this terminal yet.'}</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function operatorChargeStatementsHtml(op){
+  const key = 'op|'+op.id;
+  const loaded = CHARGE_STATEMENTS_LOADED_KEY === key;
+  if(!loaded && !CHARGE_STATEMENTS_LOADING){
+    CHARGE_STATEMENTS_LOADING = true;
+    (async ()=>{
+      try{ CHARGE_STATEMENTS_CACHE = await GoStatementLive.loadStatements({ operatorId: op.id }); CHARGE_STATEMENTS_LOADED_KEY = key; CHARGE_STATEMENTS_LOAD_ERROR = null; }
+      catch(err){ console.error('load operator statements failed', err); CHARGE_STATEMENTS_LOAD_ERROR = err.message || 'Could not load your statements.'; }
+      CHARGE_STATEMENTS_LOADING = false;
+      if(VIEW.route==='chargestatements') renderMain();
+    })();
+  }
+  const loading = !loaded;
+  const stmts = loaded ? CHARGE_STATEMENTS_CACHE : [];
+  const statusLine = CHARGE_STATEMENTS_LOAD_ERROR
+    ? `<span style="color:var(--bad);">Failed to load: ${esc(CHARGE_STATEMENTS_LOAD_ERROR)} — <button class="btn btn-sm" id="btn-cs-op-retry" style="padding:2px 8px;">Retry</button></span>`
+    : (loading ? `<span style="color:var(--ink-faint);">Loading…</span>` : '');
+  return `
+    <div id="topbar">
+      <div><h1>Statements</h1><div class="desc">Undersales, Compensation, Refund &amp; Other Charges for ${esc(op.company)}</div></div>
+      <div class="topbar-actions"><button class="btn btn-accent btn-sm" id="btn-cs-add">+ Generate Statement</button></div>
+    </div>
+    ${statusLine ? `<div style="margin-bottom:10px; font-size:13px;">${statusLine}</div>` : ''}
+    <div class="card table-card">
+      <div class="scrollx">
+        <table>
+          <thead><tr><th style="text-align:left;">Statement No.</th><th>Type</th><th>Date</th><th>Amount</th><th>Status</th><th style="text-align:right;">Actions</th></tr></thead>
+          <tbody>
+            ${stmts.map(s=>chargeStatementRowHtml(s,{showOperator:false, canManage: s.status!=='finalized'})).join('') || `<tr><td colspan="6" style="text-align:center; color:var(--ink-faint); padding:20px;">${loading?'Loading…':'No statements yet.'}</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+// Reuses the generic table-document PDF writer (renderPdfDocument) — one
+// line item (type + description + period + amount) on a GoStatement-branded
+// page, same engine as the manual invoice summary export.
+function statementToDrawSpec(stmt){
+  const code = stmt.terminals ? stmt.terminals.code : VIEW.chargeStatements.terminal;
+  const t = INVOICE_TERMINAL_LABEL[code] || INVOICE_TERMINAL_LABEL.KT;
+  const type = STATEMENT_TYPES[stmt.type] || STATEMENT_TYPES.other_charges;
+  const opName = stmt.operators ? stmt.operators.company : '';
+  const periodLabel = stmt.period_from ? `${fmtSlashDate(stmt.period_from,true)} - ${fmtSlashDate(stmt.period_to||stmt.period_from,true)}` : fmtSlashDate(stmt.statement_date,true);
+  return {
+    docTitle: type.label.toUpperCase()+' STATEMENT',
+    brandSub: t.name,
+    metaLine: fmtSlashDate(stmt.statement_date,true),
+    partyLabel: 'OPERATOR', partyName: opName, partySub: stmt.statement_no,
+    bigLabel: 'AMOUNT', bigValue: fmtMoney(stmt.amount),
+    columns: [
+      {label:'Type', w:90, align:'left'},
+      {label:'Description', w:220, align:'left'},
+      {label:'Period', w:110, align:'left'},
+      {label:'Amount (RM)', w:95, align:'right'},
+    ],
+    rows: [[type.label, stmt.description || '—', periodLabel, Number(stmt.amount).toFixed(2)]],
+    totalRows: [{ cells: ['','','Total', Number(stmt.amount).toFixed(2)], bold:true, colors:[null,null,null,PDF_COLOR.black] }],
+    footNote: stmt.status==='draft' ? 'DRAFT — not yet finalized.' : '',
+  };
+}
+async function downloadChargeStatementPdf(stmt){
+  const bytes = renderPdfDocument(statementToDrawSpec(stmt));
+  await saveViaDownloads(bytes, `${stmt.statement_no.replace(/\//g,'-')}.pdf`);
+}
+
+async function openChargeStatementModal(actor, effectiveOp, existingStatement){
+  const isOperator = !!effectiveOp;
+  const terminalCode = isOperator ? effectiveOp.terminal : VIEW.chargeStatements.terminal;
+  const opsInTerminal = isOperator ? [effectiveOp] : STATE.operators.filter(o=>o.terminal===terminalCode && o.active!==false).sort((a,b)=>a.company.localeCompare(b.company));
+  if(!opsInTerminal.length){ toast('No operators found for this terminal.'); return; }
+
+  function modalHtml(){
+    const today = new Date().toISOString().slice(0,10);
+    const selectedOpId = existingStatement ? existingStatement.operator_id : (isOperator ? effectiveOp.id : opsInTerminal[0].id);
+    const selectedType = existingStatement ? existingStatement.type : 'undersales';
+    return `
+      <h3>${existingStatement?'Edit':'Generate'} Statement</h3>
+      <span class="sub">Undersales, Compensation, Refund or Other Charges</span>
+      <form id="csForm">
+        ${isOperator ? `<div class="field"><label>Operator</label><input type="text" value="${esc(effectiveOp.company)}" disabled></div>` : `
+        <div class="field"><label>Operator</label>
+          <select id="csOpSel" ${existingStatement?'disabled':''}>
+            ${opsInTerminal.map(o=>`<option value="${o.id}" ${o.id===selectedOpId?'selected':''}>${esc(o.company)}</option>`).join('')}
+          </select>
+        </div>`}
+        <div class="field"><label>Type</label>
+          <select id="csTypeSel">
+            ${Object.entries(STATEMENT_TYPES).map(([k,v])=>`<option value="${k}" ${k===selectedType?'selected':''}>${v.label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Statement date</label><input type="date" id="csDate" value="${existingStatement?existingStatement.statement_date:today}"></div>
+        <div class="field"><label>Period (optional)</label>
+          <div style="display:flex; gap:8px;">
+            <input type="date" id="csPeriodFrom" value="${existingStatement?(existingStatement.period_from||''):''}" style="flex:1;">
+            <input type="date" id="csPeriodTo" value="${existingStatement?(existingStatement.period_to||''):''}" style="flex:1;">
+          </div>
+        </div>
+        <div class="field"><label>Amount (RM)</label><input type="number" step="0.01" min="0" id="csAmount" value="${existingStatement?Number(existingStatement.amount).toFixed(2):''}"></div>
+        <div class="field"><label>Description / reason</label><textarea id="csDesc" rows="3" placeholder="Explain the reason for this statement...">${esc(existingStatement?(existingStatement.description||''):'')}</textarea></div>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="csCancel">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    `;
+  }
+  function render(){ openModal(modalHtml()); wire(); }
+  function wire(){
+    document.getElementById('csCancel').addEventListener('click', closeModal);
+    document.getElementById('csForm').addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const opId = isOperator ? effectiveOp.id : document.getElementById('csOpSel').value;
+      const op = STATE.operators.find(o=>o.id===opId);
+      if(!op){ toast('Select an operator.'); return; }
+      const type = document.getElementById('csTypeSel').value;
+      const date = document.getElementById('csDate').value;
+      if(!date){ toast('Statement date is required.'); return; }
+      const periodFrom = document.getElementById('csPeriodFrom').value || null;
+      const periodTo = document.getElementById('csPeriodTo').value || null;
+      const amount = parseFloat(document.getElementById('csAmount').value) || 0;
+      const description = document.getElementById('csDesc').value.trim();
+      const terminalId = TERMINAL_IDS[op.terminal];
+      const statementNo = existingStatement ? existingStatement.statement_no : buildStatementNo(op.terminal, type, date);
+      try{
+        await GoStatementLive.saveStatement({
+          id: existingStatement?existingStatement.id:undefined,
+          terminalId, operatorId: op.id, type, statementNo, statementDate: date,
+          periodFrom, periodTo, amount, description, status: existingStatement?existingStatement.status:'draft'
+        });
+        closeModal();
+        toast('Statement saved.');
+        CHARGE_STATEMENTS_LOADED_KEY = null;
+        renderMain();
+      }catch(err){ toast('Save failed: ' + err.message); }
+    });
+  }
+  render();
+}
+
+function wireChargeStatements(actor, effectiveOp){
+  if(VIEW.route !== 'chargestatements') return;
+
+  const addBtn = document.getElementById('btn-cs-add');
+  if(addBtn) addBtn.addEventListener('click', ()=> openChargeStatementModal(actor, effectiveOp, null));
+
+  if(effectiveOp){
+    const retryBtn = document.getElementById('btn-cs-op-retry');
+    if(retryBtn) retryBtn.addEventListener('click', ()=>{ CHARGE_STATEMENTS_LOAD_ERROR = null; CHARGE_STATEMENTS_LOADED_KEY = null; renderMain(); });
+  } else {
+    const terminalSel = document.getElementById('csTerminalSel');
+    if(terminalSel) terminalSel.addEventListener('change', ()=>{ VIEW.chargeStatements.terminal = terminalSel.value; CHARGE_STATEMENTS_LOADED_KEY = null; renderMain(); });
+    const typeFilter = document.getElementById('csTypeFilter');
+    if(typeFilter) typeFilter.addEventListener('change', ()=>{ VIEW.chargeStatements.typeFilter = typeFilter.value; renderMain(); });
+    const retrySync = document.getElementById('btn-cs-retry-sync');
+    if(retrySync) retrySync.addEventListener('click', ()=> renderMain());
+    const retryLoad = document.getElementById('btn-cs-retry-load');
+    if(retryLoad) retryLoad.addEventListener('click', ()=>{ CHARGE_STATEMENTS_LOAD_ERROR = null; CHARGE_STATEMENTS_LOADED_KEY = null; renderMain(); });
+  }
+
+  document.querySelectorAll('[data-cs-toggle]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.getAttribute('data-cs-toggle');
+      VIEW.chargeStatements.expandedId = VIEW.chargeStatements.expandedId===id ? null : id;
+      renderMain();
+    });
+  });
+  document.querySelectorAll('[data-cs-download]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const s = CHARGE_STATEMENTS_CACHE.find(x=>x.id===btn.getAttribute('data-cs-download'));
+      if(s) await downloadChargeStatementPdf(s);
+    });
+  });
+  document.querySelectorAll('[data-cs-edit]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const s = CHARGE_STATEMENTS_CACHE.find(x=>x.id===btn.getAttribute('data-cs-edit'));
+      if(s) openChargeStatementModal(actor, effectiveOp, s);
+    });
+  });
+  document.querySelectorAll('[data-cs-toggle-status]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const s = CHARGE_STATEMENTS_CACHE.find(x=>x.id===btn.getAttribute('data-cs-toggle-status'));
+      if(!s) return;
+      const newStatus = s.status==='finalized' ? 'draft' : 'finalized';
+      try{
+        await GoStatementLive.setStatementStatus(s.id, newStatus);
+        toast(newStatus==='finalized' ? 'Statement finalized.' : 'Statement reopened as draft.');
+        CHARGE_STATEMENTS_LOADED_KEY = null;
+        renderMain();
+      }catch(err){ toast('Failed: '+err.message); }
+    });
+  });
+  document.querySelectorAll('[data-cs-delete]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('Delete this statement? This cannot be undone.')) return;
+      try{
+        await GoStatementLive.deleteStatement(btn.getAttribute('data-cs-delete'));
+        toast('Statement deleted.');
+        CHARGE_STATEMENTS_LOADED_KEY = null;
+        renderMain();
       }catch(err){ toast('Failed: '+err.message); }
     });
   });
