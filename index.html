@@ -618,6 +618,10 @@ function persist(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE)); }
    (e.g. config.js not filled in, or offline).
    ============================================================ */
 let TERMINAL_IDS = {};
+// Every operator the signed-in operator has access to (a company running
+// several brands, or the same brand at both terminals, shares one login).
+// Empty/single-entry means "no switcher" — behaves exactly as before.
+let MY_OPERATORS = [];
 let __cloudChannel = null;
 
 async function cloudLoadAll(){
@@ -721,6 +725,7 @@ const VIEW = {
   entryForm: { terminal:'KT', operatorId:null, date:null },
   manualInvoice: { terminal:'KT', period: new Date().toISOString().slice(0,7), operatorId:null, expandedId:null },
   ledgerExpandedKey: null,
+  selectedOperatorId: null, // which of MY_OPERATORS is active, for a multi-operator login
 };
 
 /* ============================================================
@@ -1063,6 +1068,8 @@ async function handleLogin(e){
         const op = STATE.operators.find(o=>o.id === profile.operators.id);
         if(op){
           setSession({ type:'operator', id: op.id });
+          VIEW.selectedOperatorId = op.id;
+          try{ MY_OPERATORS = await GoStatementLive.loadMyOperators(); }catch(e){ MY_OPERATORS = []; }
           enterApp();
           startCloudRealtime(()=>{ if(document.getElementById('app').classList.contains('active')) renderMain(); });
           return;
@@ -1215,7 +1222,13 @@ function currentActor(){
   const s = getSession();
   if(!s) return null;
   if(s.type === 'admin'){ const admin = findAdminById(s.adminId); return admin ? { type:'admin', admin } : null; }
-  const op = findOperatorById(s.id);
+  // Multi-operator login: use whichever operator is currently selected in
+  // the switcher (defaults to the session's own operator) as long as it's
+  // actually one this login has access to — otherwise fall back to the
+  // session's operator, same as before the switcher existed.
+  const wantId = (VIEW.selectedOperatorId && (MY_OPERATORS.length===0 || MY_OPERATORS.some(o=>o.id===VIEW.selectedOperatorId)))
+    ? VIEW.selectedOperatorId : s.id;
+  const op = findOperatorById(wantId) || findOperatorById(s.id);
   return op ? { type:'operator', op } : null;
 }
 function icon(path){ return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`; }
@@ -1289,6 +1302,23 @@ function renderShell(){
     const back = el(`<button class="nav-item" style="background:var(--accent-soft); color:var(--accent); margin-top:4px;">${icon('<path d="M15 18l-6-6 6-6"/>')}<span>Back to Admin</span></button>`);
     back.addEventListener('click', ()=>{ VIEW.viewingAsOperatorId = null; VIEW.route='directory'; renderShell(); });
     nav.appendChild(back);
+  }
+
+  // Operator switcher: only appears when this login has more than one
+  // operator (a company running several brands, or the same brand at both
+  // terminals). One operator behaves exactly as it always has — no switcher.
+  if(actor.type === 'operator' && MY_OPERATORS.length > 1){
+    const wrap = el(`<div style="margin-top:10px; padding:0 4px;"><label style="font-size:11px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.04em; display:block; margin-bottom:4px;">Switch operator</label></div>`);
+    const select = el(`<select style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--ink); font-size:13px;">
+      ${MY_OPERATORS.map(o=>`<option value="${o.id}" ${o.id===actor.op.id?'selected':''}>${esc(o.company)} — ${esc(o.terminalCode||'')}</option>`).join('')}
+    </select>`);
+    select.addEventListener('change', ()=>{
+      VIEW.selectedOperatorId = select.value;
+      VIEW.route = 'dashboard';
+      renderShell();
+    });
+    wrap.appendChild(select);
+    nav.appendChild(wrap);
   }
 
   if(actor.type === 'admin' && !VIEW.viewingAsOperatorId){
@@ -4512,7 +4542,11 @@ window.addEventListener('resize', ()=>{
           setSession({ type:'admin', adminId: profile.id });
         } else if(profile && profile.operators){
           const op = STATE.operators.find(o=>o.id === profile.operators.id);
-          if(op) setSession({ type:'operator', id: op.id });
+          if(op){
+            setSession({ type:'operator', id: op.id });
+            VIEW.selectedOperatorId = op.id;
+            try{ MY_OPERATORS = await GoStatementLive.loadMyOperators(); }catch(e){ MY_OPERATORS = []; }
+          }
         }
       }
     }catch(err){ console.error('GoStatement Live: session restore failed', err); }

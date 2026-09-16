@@ -109,6 +109,26 @@
     return data;
   }
 
+  // Every operator row the CURRENTLY signed-in user has membership in (via
+  // operator_members) — for the same real company running multiple brands
+  // and/or the same brand at both terminals. Returns [] for an admin or a
+  // user with no memberships at all (shouldn't happen once a claim/backfill
+  // has run, but the frontend treats an empty list the same as "one
+  // operator" and falls back to profiles.operator_id).
+  async function loadMyOperators() {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user) return [];
+    const { data, error } = await db
+      .from("operator_members")
+      .select("operators(id, company, terminal_id, terminals(code, name))")
+      .eq("user_id", user.id);
+    if (error) throw error;
+    return (data || [])
+      .map(r => r.operators)
+      .filter(Boolean)
+      .map(o => ({ id: o.id, company: o.company, terminalCode: o.terminals?.code, terminalName: o.terminals?.name }));
+  }
+
   async function updateOperator(id, patch) {
     const { data, error } = await db.from("operators").update(patch).eq("id", id).select().single();
     if (error) throw error;
@@ -121,8 +141,12 @@
   async function generateClaimCode(operatorId) {
     for (let i = 0; i < 5; i++) {
       const code = Array.from(crypto.getRandomValues(new Uint8Array(6))).map(b => b.toString(36)).join("").slice(0, 8).toUpperCase();
-      const { error } = await db.from("operators").update({ claim_code: code }).eq("id", operatorId);
-      if (!error) return code;
+      // .select() + a row-count check matter here: PostgREST returns HTTP 200
+      // with an empty array (not an error) when RLS silently blocks the
+      // write, so `!error` alone can look like success on a no-op update.
+      const { data, error } = await db.from("operators").update({ claim_code: code }).eq("id", operatorId).select("id");
+      if (!error && data && data.length > 0) return code;
+      if (!error && (!data || data.length === 0)) throw new Error("Update was blocked (no matching row) — check permissions.");
       if (i === 4) throw error;
     }
   }
@@ -294,6 +318,11 @@
       .update({ status, updated_by: user ? user.id : null })
       .in("id", ids).select();
     if (error) throw error;
+    // A silently-blocked RLS write returns HTTP 200 with an empty/short
+    // array, not an error — surface that instead of pretending it worked.
+    if (!data || data.length < ids.length) {
+      throw new Error(`Only ${data ? data.length : 0} of ${ids.length} row(s) were updated — the rest were likely blocked by permissions.`);
+    }
     return data;
   }
 
@@ -409,7 +438,7 @@
     signIn, signOut, getSession, getMyProfile,
     requestPasswordReset, completePasswordReset,
     // reference data
-    loadTerminals, loadOperators, createOperator, updateOperator, provisionOperatorLogin,
+    loadTerminals, loadOperators, loadMyOperators, createOperator, updateOperator, provisionOperatorLogin,
     generateClaimCode, lookupClaim, claimAccount,
     // admins
     listAdmins, listAdminsWithEmail, inviteAdmin, setAdminActive, deleteAdmin, updateAdminPermissions,
