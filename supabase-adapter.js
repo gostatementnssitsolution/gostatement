@@ -274,18 +274,23 @@
     return all;
   }
 
-  // All entries for one terminal + exact date, with the operator's
-  // notification email/CC and email-sent status — the data set for the
-  // "Send Statements" screen. A single day's rows are always well under the
-  // API row cap, so no pagination needed here.
-  async function loadEntriesForDate({ terminalId, entryDate }) {
+  // All entries for one terminal across a date range (a single day is just
+  // dateFrom===dateTo), with the operator's notification email/CC and
+  // email-sent status — the data set for the "Send Statements" screen. A
+  // handful of days' rows are always well under the API row cap, so no
+  // pagination needed here.
+  async function loadEntriesForRange({ terminalId, dateFrom, dateTo }) {
     const { data, error } = await db
       .from("settlement_entries")
       .select("id, entry_date, sales, std_charge, manual_charge, undersales, final_amount, items, email_sent_at, email_sent_by, operator_id, operators(id, company, notify_email, notify_email_cc)")
       .eq("terminal_id", terminalId)
-      .eq("entry_date", entryDate);
+      .gte("entry_date", dateFrom)
+      .lte("entry_date", dateTo || dateFrom);
     if (error) throw error;
-    return (data || []).sort((a, b) => (a.operators?.company || "").localeCompare(b.operators?.company || ""));
+    return (data || []).sort((a, b) => {
+      const c = (a.operators?.company || "").localeCompare(b.operators?.company || "");
+      return c !== 0 ? c : a.entry_date.localeCompare(b.entry_date);
+    });
   }
 
   // The single editable-content row for the settlement email — read by both
@@ -556,7 +561,7 @@
     listAdmins, listAdminsWithEmail, inviteAdmin, setAdminActive, deleteAdmin, updateAdminPermissions,
     // entries
     loadEntries, getEntry, saveEntry, setEntryStatus, bulkSetStatus, deleteEntry,
-    loadEntriesForDate, sendSettlementEmails, loadEmailTemplate, saveEmailTemplate,
+    loadEntriesForRange, sendSettlementEmails, loadEmailTemplate, saveEmailTemplate,
     // manual invoice + trip list
     loadManualInvoices, loadManualTripEntries, saveManualInvoice, saveManualTripEntries, deleteManualInvoice,
     // statements (undersales / compensation / refund / other charges)

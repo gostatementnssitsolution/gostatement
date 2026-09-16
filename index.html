@@ -946,7 +946,7 @@ const VIEW = {
   entryForm: { terminal:'KT', operatorId:null, date:null },
   manualInvoice: { terminal:'KT', period: new Date().toISOString().slice(0,7), operatorId:null, expandedId:null },
   chargeStatements: { terminal:'KT', typeFilter:'ALL', search:'', dateFrom:'', dateTo:'', expandedId:null },
-  sendStatements: { terminal:'KT', date: new Date().toISOString().slice(0,10), selected:{} },
+  sendStatements: { terminal:'KT', dateFrom: new Date().toISOString().slice(0,10), dateTo: new Date().toISOString().slice(0,10), selected:{} },
   ledgerExpandedKey: null,
   selectedOperatorId: null, // which of MY_OPERATORS is active, for a multi-operator login
   adjSearchQuery: '',
@@ -5355,11 +5355,11 @@ async function loadSendStatementsForView(){
   const terminalId = TERMINAL_IDS[VIEW.sendStatements.terminal];
   if(!terminalId) return;
   if(SEND_STATEMENTS_LOADING) return;
-  const key = terminalId+'|'+VIEW.sendStatements.date;
+  const key = terminalId+'|'+VIEW.sendStatements.dateFrom+'|'+VIEW.sendStatements.dateTo;
   SEND_STATEMENTS_LOADING = true;
   SEND_STATEMENTS_LOAD_ERROR = null;
   try{
-    SEND_STATEMENTS_CACHE = await GoStatementLive.loadEntriesForDate({ terminalId, entryDate: VIEW.sendStatements.date });
+    SEND_STATEMENTS_CACHE = await GoStatementLive.loadEntriesForRange({ terminalId, dateFrom: VIEW.sendStatements.dateFrom, dateTo: VIEW.sendStatements.dateTo });
     SEND_STATEMENTS_LOADED_KEY = key;
   }catch(err){
     console.error('loadSendStatementsForView failed', err);
@@ -5369,22 +5369,42 @@ async function loadSendStatementsForView(){
   if(VIEW.route === 'sendstatements') renderMain();
 }
 
-function sendStatementRowHtml(e){
-  const op = e.operators || {};
-  const sent = !!e.email_sent_at;
-  const checked = !!VIEW.sendStatements.selected[e.id];
+// Selecting a 3-day (or N-day) range means several entries per operator —
+// those become ONE combined email, not N separate ones, so the table (and
+// selection state) groups by operator rather than listing one row per entry.
+function groupSendStatementsByOperator(entries){
+  const map = new Map();
+  for(const e of entries){
+    const op = e.operators || {};
+    if(!map.has(op.id)) map.set(op.id, { operatorId: op.id, company: op.company||'', notifyEmail: op.notify_email||'', notifyEmailCc: op.notify_email_cc||'', entries: [] });
+    map.get(op.id).entries.push(e);
+  }
+  return Array.from(map.values()).map(g=>{
+    g.entries.sort((a,b)=> a.entry_date < b.entry_date ? -1 : 1);
+    g.totalFinal = g.entries.reduce((s,e)=>s+(Number(e.final_amount)||0),0);
+    g.allSent = g.entries.every(e=>e.email_sent_at);
+    g.anySent = g.entries.some(e=>e.email_sent_at);
+    g.lastSentAt = g.entries.reduce((max,e)=> e.email_sent_at && (!max || e.email_sent_at>max) ? e.email_sent_at : max, null);
+    return g;
+  }).sort((a,b)=>a.company.localeCompare(b.company));
+}
+
+function sendStatementRowHtml(g){
+  const checked = !!VIEW.sendStatements.selected[g.operatorId];
+  const dayCount = g.entries.length;
   return `
     <tr>
-      <td style="text-align:center;"><input type="checkbox" class="send-row-check" data-send-check="${e.id}" ${checked?'checked':''}></td>
-      <td style="text-align:left; font-weight:600;">${esc(op.company||'')}</td>
-      <td style="text-align:left;"><input type="email" class="btn btn-sm" data-notify-email="${op.id}" value="${esc(op.notify_email||'')}" placeholder="recipient email" style="width:190px;"></td>
-      <td style="text-align:left;"><input type="email" class="btn btn-sm" data-notify-cc="${op.id}" value="${esc(op.notify_email_cc||'')}" placeholder="cc (optional)" style="width:170px;"></td>
-      <td class="num" style="font-weight:700;">${fmtMoney(e.final_amount)}</td>
-      <td>${sent ? `<span class="pill pill-good" title="${esc(new Date(e.email_sent_at).toLocaleString('en-MY'))}">Sent ${esc(new Date(e.email_sent_at).toLocaleDateString('en-MY',{day:'2-digit',month:'short'}))}</span>` : `<span class="pill pill-neutral">Not sent</span>`}</td>
+      <td style="text-align:center;"><input type="checkbox" class="send-row-check" data-send-check="${g.operatorId}" ${checked?'checked':''}></td>
+      <td style="text-align:left; font-weight:600;">${esc(g.company)}</td>
+      <td style="text-align:left;"><input type="email" class="btn btn-sm" data-notify-email="${g.operatorId}" value="${esc(g.notifyEmail)}" placeholder="recipient email" style="width:190px;"></td>
+      <td style="text-align:left;"><input type="email" class="btn btn-sm" data-notify-cc="${g.operatorId}" value="${esc(g.notifyEmailCc)}" placeholder="cc (optional)" style="width:170px;"></td>
+      <td class="num">${dayCount} day${dayCount>1?'s':''}</td>
+      <td class="num" style="font-weight:700;">${fmtMoney(g.totalFinal)}</td>
+      <td>${g.allSent ? `<span class="pill pill-good" title="${esc(new Date(g.lastSentAt).toLocaleString('en-MY'))}">Sent</span>` : (g.anySent ? `<span class="pill pill-accent">Partially sent</span>` : `<span class="pill pill-neutral">Not sent</span>`)}</td>
       <td style="text-align:right;">
         <div style="display:flex; gap:6px; justify-content:flex-end;">
-          <button class="btn btn-sm" data-preview-email="${e.id}">Preview</button>
-          <button class="btn btn-sm ${sent?'':'btn-accent'}" data-send-one="${e.id}">${sent?'Resend':'Send'}</button>
+          <button class="btn btn-sm" data-preview-email="${g.operatorId}">Preview</button>
+          <button class="btn btn-sm ${g.allSent?'':'btn-accent'}" data-send-one="${g.operatorId}">${g.allSent?'Resend':'Send'}</button>
         </div>
       </td>
     </tr>`;
@@ -5393,31 +5413,33 @@ function sendStatementRowHtml(e){
 function adminSendStatementsHtml(){
   if(!EMAIL_TEMPLATE) ensureEmailTemplateLoaded().then(()=>{ if(VIEW.route==='sendstatements') renderMain(); });
   const terminalId = TERMINAL_IDS[VIEW.sendStatements.terminal];
-  const key = terminalId ? terminalId+'|'+VIEW.sendStatements.date : null;
+  const key = terminalId ? terminalId+'|'+VIEW.sendStatements.dateFrom+'|'+VIEW.sendStatements.dateTo : null;
   const loaded = terminalId && SEND_STATEMENTS_LOADED_KEY === key;
   if(terminalId && !loaded && !SEND_STATEMENTS_LOADING) loadSendStatementsForView();
   const loading = !loaded && !SEND_STATEMENTS_LOAD_ERROR;
-  const rows = loaded ? SEND_STATEMENTS_CACHE : [];
-  const sentCount = rows.filter(r=>r.email_sent_at).length;
-  const missingEmailCount = rows.filter(r=>!(r.operators&&r.operators.notify_email)).length;
-  const selectedIds = Object.keys(VIEW.sendStatements.selected).filter(id=>VIEW.sendStatements.selected[id] && rows.some(r=>r.id===id));
+  const groups = loaded ? groupSendStatementsByOperator(SEND_STATEMENTS_CACHE) : [];
+  const sentCount = groups.filter(g=>g.allSent).length;
+  const missingEmailCount = groups.filter(g=>!g.notifyEmail).length;
+  const selectedIds = Object.keys(VIEW.sendStatements.selected).filter(id=>VIEW.sendStatements.selected[id] && groups.some(g=>g.operatorId===id));
 
   let statusLine;
   if(!terminalId) statusLine = `<span style="color:var(--bad);">Not connected to the cloud yet.</span>`;
   else if(SEND_STATEMENTS_LOAD_ERROR) statusLine = `<span style="color:var(--bad);">Failed to load: ${esc(SEND_STATEMENTS_LOAD_ERROR)} — <button class="btn btn-sm" id="btn-send-retry" style="padding:2px 8px;">Retry</button></span>`;
   else if(loading) statusLine = `<span style="color:var(--ink-faint);">Loading…</span>`;
-  else statusLine = `<span style="color:var(--ink-faint); font-size:12.5px;">${rows.length} operator(s) · ${sentCount} sent${missingEmailCount ? ` · <span style="color:var(--bad);">${missingEmailCount} missing an email</span>` : ' · all have an email'}</span>`;
+  else statusLine = `<span style="color:var(--ink-faint); font-size:12.5px;">${groups.length} operator(s) · ${sentCount} fully sent${missingEmailCount ? ` · <span style="color:var(--bad);">${missingEmailCount} missing an email</span>` : ' · all have an email'}</span>`;
 
   return `
     <div id="topbar">
-      <div><h1>Send Statements</h1><div class="desc">Email the Daily Settlement Statement to each operator via Outlook — same content as the old Word mail-merge.</div></div>
+      <div><h1>Send Statements</h1><div class="desc">Email the Daily Settlement Statement to each operator via Outlook — pick one day or a whole range, one combined email per operator either way.</div></div>
       <div class="topbar-actions">
         <select id="sendTerminalSel" class="btn btn-sm">
           <option value="KT" ${VIEW.sendStatements.terminal==='KT'?'selected':''}>Kuala Terengganu Bus Terminal</option>
           <option value="MS" ${VIEW.sendStatements.terminal==='MS'?'selected':''}>Melaka Sentral</option>
         </select>
-        <input type="date" id="sendDateSel" class="btn btn-sm" value="${VIEW.sendStatements.date}">
+        <input type="date" id="sendDateFromSel" class="btn btn-sm" value="${VIEW.sendStatements.dateFrom}" title="From date">
+        <input type="date" id="sendDateToSel" class="btn btn-sm" value="${VIEW.sendStatements.dateTo}" title="Until date">
         <label class="btn btn-sm" style="cursor:pointer;">Import Notification Emails<input type="file" id="sendImportEmails" accept=".xlsx" style="display:none;"></label>
+        <label class="btn btn-sm" style="cursor:pointer;">Import Master Operator List<input type="file" id="sendImportMasterList" accept=".xlsx" style="display:none;"></label>
         <button class="btn btn-sm" id="btn-manage-all-emails">Manage All Operator Emails</button>
         <button class="btn btn-sm" id="btn-edit-email-template">Edit Email Template</button>
         <button class="btn btn-accent btn-sm" id="btn-send-selected" ${!selectedIds.length?'disabled':''}>Send Selected (${selectedIds.length})</button>
@@ -5427,9 +5449,9 @@ function adminSendStatementsHtml(){
       <div class="table-toolbar">${statusLine}</div>
       <div class="scrollx">
         <table>
-          <thead><tr><th style="width:36px;"><input type="checkbox" id="sendSelectAll"></th><th style="text-align:left;">Operator</th><th style="text-align:left;">Notification Email</th><th style="text-align:left;">CC</th><th>Final Amount</th><th>Status</th><th style="text-align:right;">Actions</th></tr></thead>
+          <thead><tr><th style="width:36px;"><input type="checkbox" id="sendSelectAll"></th><th style="text-align:left;">Operator</th><th style="text-align:left;">Notification Email</th><th style="text-align:left;">CC</th><th>Days</th><th>Total Final</th><th>Status</th><th style="text-align:right;">Actions</th></tr></thead>
           <tbody>
-            ${rows.map(sendStatementRowHtml).join('') || `<tr><td colspan="7" style="text-align:center; color:var(--ink-faint); padding:20px;">${loading?'Loading…':'No settlement entries for this terminal/date yet.'}</td></tr>`}
+            ${groups.map(sendStatementRowHtml).join('') || `<tr><td colspan="8" style="text-align:center; color:var(--ink-faint); padding:20px;">${loading?'Loading…':'No settlement entries for this terminal/period yet.'}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -5438,14 +5460,11 @@ function adminSendStatementsHtml(){
 }
 
 // Renders the same content the Edge Function will actually send, so an
-// admin can sanity-check a statement before it goes out.
-// Colors/hierarchy lifted 1:1 from the original Word template's run
-// properties (word/document.xml): teal eyebrow #0E9FB8, navy title/labels
-// #0F2B3D, gray subtext #667884, table header fill #0F2B3D, final-amount
-// box fill #E9F7FA. This is the same builder logic the Edge Function uses
-// server-side (send-settlement-email/index.ts) — kept in sync by hand since
-// one runs in Deno and one in the browser, but both read the same
-// EMAIL_TEMPLATE row so wording always matches exactly.
+// admin can sanity-check a statement before it goes out — same grouping
+// (1..N days -> one email), same dynamic charge columns, same signature
+// block. Kept in sync by hand with send-settlement-email/index.ts since one
+// runs in Deno and one in the browser, but both read the same EMAIL_TEMPLATE
+// row so wording/colors/signature always match exactly.
 const EMAIL_TPL_DEFAULT = {
   greeting: 'Dear Sir/Madam,',
   intro_text: 'We are pleased to inform you that this is the Daily Settlement for {terminal} for the date of {date}. Thank you.',
@@ -5453,6 +5472,8 @@ const EMAIL_TPL_DEFAULT = {
   contact_email: 'finance.nssit@gohub.com.my',
   signature_name: 'FINANCE OPERATION',
   signature_company: 'NSS IT Solution Sdn Bhd',
+  disclaimer_text: 'This email and its contents are confidential and intended solely for the recipient. If received in error, please notify the sender and delete it immediately. Any unauthorised use, disclosure, or distribution is prohibited. Views expressed may not represent those of GO HUB CAPITAL BERHAD or its group of companies.',
+  signature_image_url: 'https://gostatementnssitsolution.github.io/gostatement/gohub-signature.png',
 };
 let EMAIL_TEMPLATE = null; // loaded lazily on first visit to Send Statements
 
@@ -5462,49 +5483,56 @@ async function ensureEmailTemplateLoaded(){
   catch(e){ console.error('loadEmailTemplate failed', e); EMAIL_TEMPLATE = { ...EMAIL_TPL_DEFAULT }; }
 }
 
-function buildStatementPreviewHtml(e){
-  const op = e.operators||{};
-  const items = e.items||{};
+function buildStatementPreviewHtml(g){
   const tpl = EMAIL_TEMPLATE || EMAIL_TPL_DEFAULT;
   const terminalName = SEND_TERMINAL_FULL_NAME[VIEW.sendStatements.terminal]||VIEW.sendStatements.terminal;
-  const dateLabel = fmtSlashDate(e.entry_date, false);
-  const row = {
-    terminalCharges: pickItemValue(items,'Terminal Charges'),
-    pickupCharges: pickItemValue(items,'Pickup Charges'),
-    parkingCharges: pickItemValue(items,'Parking Charges'),
-    parkingRefund: pickItemValue(items,'Parking Charges Refund'),
-    undersales: pickItemValue(items,'Undersales') || Number(e.undersales)||0,
-  };
+  const sorted = g.entries;
+  const dateLabel = sorted.length>1 ? `${fmtSlashDate(sorted[0].entry_date,false)} – ${fmtSlashDate(sorted[sorted.length-1].entry_date,false)}` : fmtSlashDate(sorted[0].entry_date,false);
+  const periodLabel = sorted.length>1 ? 'Settlement Period' : 'Settlement Date';
+
+  const itemKeys = [];
+  for(const e of sorted){ for(const k of Object.keys(e.items||{})){ const t=k.trim(); if(t && !itemKeys.includes(t)) itemKeys.push(t); } }
+
   const NAVY='#0F2B3D', TEAL='#0E9FB8', GRAY='#667884', LIGHT='#E9F7FA', BORDER='#D7DEE2';
-  const th = (v) => `<th style="padding:7px 9px; border:1px solid ${NAVY}; background:${NAVY}; color:#fff; font-size:12px; font-weight:700; text-align:left;">${v}</th>`;
-  const td = (v, align='left') => `<td style="padding:6px 9px; border:1px solid ${BORDER}; text-align:${align}; font-size:13px; color:#000;">${v}</td>`;
+  const th = (v) => `<th style="padding:7px 9px; border:1px solid ${NAVY}; background:${NAVY}; color:#fff; font-size:12px; font-weight:700; text-align:left; white-space:nowrap;">${v}</th>`;
+  const td = (v, align='left') => `<td style="padding:6px 9px; border:1px solid ${BORDER}; text-align:${align}; font-size:13px; color:#000; white-space:nowrap;">${v}</td>`;
   const intro = esc(tpl.intro_text).replace('{terminal}', esc(terminalName)).replace('{date}', dateLabel);
+  const headers = ['No.','Date','Company','Sales Report', ...itemKeys, 'Final'];
+  const bodyRows = sorted.map((e,i)=>{
+    const cells = [td(String(i+1),'center'), td(fmtSlashDate(e.entry_date,false)), td(esc(g.company))];
+    cells.push(td(pvMoney(e.sales),'right'));
+    for(const k of itemKeys) cells.push(td(pvMoney(pickItemValue(e.items,k)),'right'));
+    cells.push(td(pvMoney(e.final_amount),'right'));
+    return `<tr>${cells.join('')}</tr>`;
+  }).join('');
+
   return `
-    <h3>Preview — ${esc(op.company||'')}</h3>
-    <span class="sub">To: ${esc(op.notify_email||'(no email set)')}${op.notify_email_cc?` · CC: ${esc(op.notify_email_cc)}`:''}</span>
-    <div style="border:1px solid var(--border); border-radius:10px; padding:20px; margin-top:12px; max-height:60vh; overflow:auto; background:#fff; color:#000; font-family:Calibri,'Segoe UI',Arial,sans-serif;">
+    <h3>Preview — ${esc(g.company)}</h3>
+    <span class="sub">To: ${esc(g.notifyEmail||'(no email set)')}${g.notifyEmailCc?` · CC: ${esc(g.notifyEmailCc)}`:''} · ${sorted.length} day(s)</span>
+    <div style="border:1px solid var(--border); border-radius:10px; padding:20px; margin-top:12px; max-height:65vh; overflow:auto; background:#fff; color:#000; font-family:Calibri,'Segoe UI',Arial,sans-serif;">
       <div style="font-weight:700; font-size:9pt; letter-spacing:.04em; color:${TEAL}; margin-bottom:6px;">DAILY SETTLEMENT STATEMENT</div>
       <div style="font-weight:700; font-size:20px; color:${NAVY}; margin-bottom:12px;">${esc(terminalName)}</div>
       <div style="color:${GRAY}; font-weight:600; margin-bottom:10px;">Detail Breakdown for Daily Settlement</div>
-      <div style="color:${GRAY};"><b>Bus Operator</b>&emsp;: ${esc(op.company||'')}</div>
-      <div style="color:${GRAY}; margin-bottom:14px;"><b>Settlement Date</b>&emsp;: ${dateLabel}</div>
+      <div style="color:${GRAY};"><b>Bus Operator</b>&emsp;: ${esc(g.company)}</div>
+      <div style="color:${GRAY}; margin-bottom:14px;"><b>${periodLabel}</b>&emsp;: ${dateLabel}</div>
       <p>${esc(tpl.greeting)}</p>
       <p>${intro}</p>
       <table style="border-collapse:collapse; width:100%; margin:14px 0;">
-        <thead><tr>${['No.','Date','Company','Sales Report','Terminal Charges','Pickup Charges','Parking Charges','Parking Charges Refund','Undersales','Final'].map(th).join('')}</tr></thead>
-        <tbody><tr>
-          ${td('1','center')}${td(dateLabel)}${td(esc(op.company||''))}
-          ${td(pvMoney(e.sales),'right')}${td(pvMoney(row.terminalCharges),'right')}${td(pvMoney(row.pickupCharges),'right')}
-          ${td(pvMoney(row.parkingCharges),'right')}${td(pvMoney(row.parkingRefund),'right')}${td(pvMoney(row.undersales),'right')}${td(pvMoney(e.final_amount),'right')}
-        </tr></tbody>
+        <thead><tr>${headers.map(th).join('')}</tr></thead>
+        <tbody>${bodyRows}</tbody>
       </table>
       <table style="border-collapse:collapse; margin-bottom:16px;"><tr style="background:${LIGHT};">
         <td style="padding:9px 16px; font-weight:700; font-size:11.5pt; color:${NAVY};">FINAL AMOUNT (RM)</td>
-        <td style="padding:9px 16px; font-weight:700; font-size:11.5pt; color:${NAVY}; text-align:right;">${pvMoney(e.final_amount)}</td>
+        <td style="padding:9px 16px; font-weight:700; font-size:11.5pt; color:${NAVY}; text-align:right;">${pvMoney(g.totalFinal)}</td>
       </tr></table>
       <p><b>Reminder:</b> ${esc(tpl.reminder_text)}</p>
       <p>Kindly feedback or inform any inquiry to this email <a href="mailto:${esc(tpl.contact_email)}" style="color:${NAVY};">${esc(tpl.contact_email)}</a></p>
-      <p>Best regards,<br><b style="color:${NAVY};">${esc(tpl.signature_name)}</b><br><span style="color:${GRAY};">${esc(tpl.signature_company)}</span></p>
+      <p>Best regards,</p>
+      <p><b>${esc(tpl.signature_name)}</b>&nbsp;|&nbsp;<i>${esc(tpl.signature_company)}</i></p>
+      ${tpl.signature_image_url ? `<img src="${esc(tpl.signature_image_url)}" alt="GO HUB CAPITAL BERHAD" style="max-width:640px; width:100%; height:auto; margin:10px 0 16px; display:block;">` : ''}
+      <p style="font-size:8pt; font-style:italic; color:#333; margin:4px 0;"><i>Disclaimer:</i></p>
+      <p style="font-size:8pt; font-style:italic; color:#333; margin:0 0 6px;">${esc(tpl.disclaimer_text)}</p>
+      <p style="font-size:8pt; font-style:italic; color:#333; margin:0;">♻️ Please consider the environment before printing this email.</p>
     </div>
     <div class="modal-actions"><button class="btn" id="previewClose">Close</button></div>
   `;
@@ -5514,14 +5542,15 @@ function openEmailTemplateModal(){
   const tpl = EMAIL_TEMPLATE || EMAIL_TPL_DEFAULT;
   openModal(`
     <h3>Edit Email Template</h3>
-    <span class="sub">This wording is used for every "Daily Settlement Statement" email — preview and actual sends always match. Use {terminal} and {date} as placeholders in the intro line.</span>
+    <span class="sub">This wording is used for every "Daily Settlement Statement" email — preview and actual sends always match. Use {terminal} and {date} as placeholders in the intro line. The GoHub signature banner and its logo are the real company asset and aren't editable here.</span>
     <form id="emailTplForm">
       <div class="field"><label>Greeting</label><input type="text" id="tplGreeting" value="${esc(tpl.greeting)}"></div>
       <div class="field"><label>Intro line</label><textarea id="tplIntro" rows="2">${esc(tpl.intro_text)}</textarea></div>
       <div class="field"><label>Reminder text</label><textarea id="tplReminder" rows="2">${esc(tpl.reminder_text)}</textarea></div>
       <div class="field"><label>Contact email</label><input type="email" id="tplContact" value="${esc(tpl.contact_email)}"></div>
       <div class="field"><label>Signature name</label><input type="text" id="tplSigName" value="${esc(tpl.signature_name)}"></div>
-      <div class="field"><label>Signature company</label><input type="text" id="tplSigCompany" value="${esc(tpl.signature_company)}"></div>
+      <div class="field"><label>Signature title / company</label><input type="text" id="tplSigCompany" value="${esc(tpl.signature_company)}"></div>
+      <div class="field"><label>Disclaimer text</label><textarea id="tplDisclaimer" rows="3">${esc(tpl.disclaimer_text)}</textarea></div>
       <div class="modal-actions">
         <button type="button" class="btn" id="tplCancel">Cancel</button>
         <button type="submit" class="btn btn-primary">Save</button>
@@ -5538,6 +5567,7 @@ function openEmailTemplateModal(){
       contact_email: document.getElementById('tplContact').value.trim(),
       signature_name: document.getElementById('tplSigName').value.trim(),
       signature_company: document.getElementById('tplSigCompany').value.trim(),
+      disclaimer_text: document.getElementById('tplDisclaimer').value.trim(),
     };
     try{
       const saved = await GoStatementLive.saveEmailTemplate(tpl.id, patch);
@@ -5549,8 +5579,8 @@ function openEmailTemplateModal(){
 }
 
 // Lists EVERY operator for the selected terminal (not just ones with an
-// entry on the selected date), so a newly-added operator's email can be set
-// before their first settlement even exists — the date-scoped table above
+// entry in the selected range), so a newly-added operator's email can be set
+// before their first settlement even exists — the range-scoped table above
 // can't show them since they have no entry to attach the row to yet.
 function openManageAllEmailsModal(){
   const terminal = VIEW.sendStatements.terminal;
@@ -5688,13 +5718,119 @@ function openEmailImportPreviewModal(parsed){
   });
 }
 
+// Parses the master "Bus Operators Summary.xlsx" — a multi-terminal
+// workbook (a "Details" sheet with a "TERMINAL KUALA TERENGGANU" section,
+// a "MELAKA SENTRAL" section, and other terminals GoStatement doesn't
+// track, which are skipped) listing every operator's BUS NAME (matches our
+// `operators.company`), EMAIL and EMAIL2 (the CC). This is the one-shot
+// "here's every company's email at once" import, covering both terminals
+// in a single file instead of the per-terminal EMAIL_MERGE workbook.
+function detectMasterListTerminal(cellText){
+  const t = String(cellText||'').toUpperCase();
+  if(t.includes('KUALA TERENGGANU')) return 'KT';
+  if(t.includes('MELAKA')) return 'MS';
+  if(t.includes('KLANG') || t.includes('TQMS') || t.includes('KLIA')) return 'SKIP';
+  return null;
+}
+async function parseBusOperatorsSummaryWorkbook(arrayBuffer){
+  const zip = await unzip(arrayBuffer);
+  const sharedStringsXml = zip.files['xl/sharedStrings.xml'] ? new TextDecoder().decode(await zip.readFile('xl/sharedStrings.xml')) : null;
+  const sharedStrings = sharedStringsXml ? parseSharedStringsXml(sharedStringsXml) : [];
+  const sheetNames = Object.keys(zip.files).filter(n => /^xl\/worksheets\/sheet\d+\.xml$/.test(n));
+  const out = [];
+  for(const sn of sheetNames){
+    const xml = new TextDecoder().decode(await zip.readFile(sn));
+    const rowsMap = parseSheetXml(xml, sharedStrings);
+    const rowIndices = Object.keys(rowsMap).map(Number).sort((a,b)=>a-b);
+    let currentTerminal = null;
+    let headerCells = null;
+    for(const ri of rowIndices){
+      const cells = rowsMap[ri];
+      const vals = Object.values(cells).filter(v=>typeof v==='string');
+      // A section-marker row has exactly one text cell and nothing that
+      // looks like a data row (no BUS NAME/EMAIL columns active yet).
+      if(vals.length===1){
+        const detected = detectMasterListTerminal(vals[0]);
+        if(detected){ currentTerminal = detected==='SKIP' ? null : detected; headerCells = null; continue; }
+      }
+      const upperVals = vals.map(v=>v.trim().toUpperCase());
+      if(upperVals.includes('BUS NAME') && upperVals.some(v=>v.includes('EMAIL'))){
+        headerCells = cells;
+        continue;
+      }
+      if(!headerCells || !currentTerminal) continue;
+      const colOf = (label)=>{
+        for(const [c,v] of Object.entries(headerCells)) if(typeof v==='string' && v.trim().toUpperCase()===label) return Number(c);
+        return null;
+      };
+      const cBusName = colOf('BUS NAME'), cEmail = colOf('EMAIL'), cEmail2 = colOf('EMAIL2');
+      if(cBusName===null) continue;
+      const busName = cells[cBusName];
+      if(typeof busName !== 'string' || !busName.trim()) continue;
+      const email = cEmail!=null ? cells[cEmail] : null;
+      const email2 = cEmail2!=null ? cells[cEmail2] : null;
+      out.push({
+        terminal: currentTerminal, company: busName.trim(),
+        email: typeof email==='string' ? email.trim() : '',
+        emailCc: typeof email2==='string' ? email2.trim() : '',
+      });
+    }
+  }
+  return out;
+}
+
+function openMasterListImportPreviewModal(parsed){
+  const matched = parsed.map(p=>{
+    const op = STATE.operators.find(o=>o.terminal===p.terminal && o.company.toUpperCase()===p.company.toUpperCase());
+    return { ...p, operatorId: op?op.id:null };
+  });
+  const matchedCount = matched.filter(m=>m.operatorId && m.email).length;
+  openModal(`
+    <h3>Import Master Operator List</h3>
+    <span class="sub">${matched.length} row(s) read across both terminals · ${matchedCount} matched an operator with an email to apply. Unmatched rows are skipped.</span>
+    <div style="max-height:55vh; overflow:auto; margin-top:12px;">
+      <table><thead><tr><th style="text-align:left;">Terminal</th><th style="text-align:left;">Bus Name</th><th style="text-align:left;">Email</th><th style="text-align:left;">CC</th><th>Match</th></tr></thead>
+      <tbody>
+        ${matched.map(m=>`<tr><td style="text-align:left;">${esc(m.terminal)}</td><td style="text-align:left;">${esc(m.company)}</td><td style="text-align:left;">${esc(m.email)}</td><td style="text-align:left;">${esc(m.emailCc)}</td><td>${m.operatorId?'<span class="pill pill-good">Matched</span>':'<span class="pill pill-neutral">Not found</span>'}</td></tr>`).join('')}
+      </tbody></table>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="masterImportCancel">Cancel</button>
+      <button class="btn btn-primary" id="masterImportConfirm">Apply to ${matchedCount} operator(s)</button>
+    </div>
+  `);
+  document.getElementById('masterImportCancel').addEventListener('click', closeModal);
+  document.getElementById('masterImportConfirm').addEventListener('click', async ()=>{
+    let ok=0, fail=0;
+    for(const m of matched){
+      if(!m.operatorId || !m.email) continue;
+      try{ await GoStatementLive.updateOperator(m.operatorId, { notify_email: m.email||null, notify_email_cc: m.emailCc||null }); ok++; }
+      catch(e){ fail++; }
+    }
+    closeModal();
+    toast(`Updated ${ok} operator(s)${fail?`, ${fail} failed`:''}.`);
+    SEND_STATEMENTS_LOADED_KEY = null;
+    renderMain();
+  });
+}
+
 function wireSendStatements(actor, effectiveOp){
   if(VIEW.route !== 'sendstatements') return;
 
   const terminalSel = document.getElementById('sendTerminalSel');
   if(terminalSel) terminalSel.addEventListener('change', ()=>{ VIEW.sendStatements.terminal = terminalSel.value; VIEW.sendStatements.selected = {}; SEND_STATEMENTS_LOADED_KEY = null; renderMain(); });
-  const dateSel = document.getElementById('sendDateSel');
-  if(dateSel) dateSel.addEventListener('change', ()=>{ VIEW.sendStatements.date = dateSel.value; VIEW.sendStatements.selected = {}; SEND_STATEMENTS_LOADED_KEY = null; renderMain(); });
+  const dateFromSel = document.getElementById('sendDateFromSel');
+  if(dateFromSel) dateFromSel.addEventListener('change', ()=>{
+    VIEW.sendStatements.dateFrom = dateFromSel.value;
+    if(VIEW.sendStatements.dateTo < dateFromSel.value) VIEW.sendStatements.dateTo = dateFromSel.value;
+    VIEW.sendStatements.selected = {}; SEND_STATEMENTS_LOADED_KEY = null; renderMain();
+  });
+  const dateToSel = document.getElementById('sendDateToSel');
+  if(dateToSel) dateToSel.addEventListener('change', ()=>{
+    VIEW.sendStatements.dateTo = dateToSel.value;
+    if(VIEW.sendStatements.dateFrom > dateToSel.value) VIEW.sendStatements.dateFrom = dateToSel.value;
+    VIEW.sendStatements.selected = {}; SEND_STATEMENTS_LOADED_KEY = null; renderMain();
+  });
   const retryBtn = document.getElementById('btn-send-retry');
   if(retryBtn) retryBtn.addEventListener('click', ()=>{ SEND_STATEMENTS_LOAD_ERROR = null; SEND_STATEMENTS_LOADED_KEY = null; renderMain(); });
   const manageAllBtn = document.getElementById('btn-manage-all-emails');
@@ -5705,9 +5841,11 @@ function wireSendStatements(actor, effectiveOp){
     openEmailTemplateModal();
   });
 
+  const groups = groupSendStatementsByOperator(SEND_STATEMENTS_CACHE);
+
   const selectAll = document.getElementById('sendSelectAll');
   if(selectAll) selectAll.addEventListener('change', ()=>{
-    SEND_STATEMENTS_CACHE.forEach(e=>{ VIEW.sendStatements.selected[e.id] = selectAll.checked; });
+    groups.forEach(g=>{ VIEW.sendStatements.selected[g.operatorId] = selectAll.checked; });
     renderMain();
   });
   document.querySelectorAll('[data-send-check]').forEach(cb=>{
@@ -5740,27 +5878,28 @@ function wireSendStatements(actor, effectiveOp){
 
   document.querySelectorAll('[data-preview-email]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      const e = SEND_STATEMENTS_CACHE.find(x=>x.id===btn.getAttribute('data-preview-email'));
-      if(!e) return;
-      openModal(buildStatementPreviewHtml(e));
+      const g = groups.find(x=>x.operatorId===btn.getAttribute('data-preview-email'));
+      if(!g) return;
+      openModal(buildStatementPreviewHtml(g));
       document.getElementById('previewClose').addEventListener('click', closeModal);
     });
   });
   document.querySelectorAll('[data-send-one]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
-      const id = btn.getAttribute('data-send-one');
-      const e = SEND_STATEMENTS_CACHE.find(x=>x.id===id);
-      if(!e) return;
-      if(!e.operators || !e.operators.notify_email){ toast('Set a notification email for this operator first.'); return; }
-      await sendStatementsBatch([id]);
+      const opId = btn.getAttribute('data-send-one');
+      const g = groups.find(x=>x.operatorId===opId);
+      if(!g) return;
+      if(!g.notifyEmail){ toast('Set a notification email for this operator first.'); return; }
+      await sendStatementsBatch(g.entries.map(e=>e.id));
     });
   });
   const sendSelectedBtn = document.getElementById('btn-send-selected');
   if(sendSelectedBtn) sendSelectedBtn.addEventListener('click', async ()=>{
-    const ids = Object.keys(VIEW.sendStatements.selected).filter(id=>VIEW.sendStatements.selected[id]);
-    if(!ids.length) return;
-    if(!confirm(`Send ${ids.length} statement email(s) now? This cannot be undone.`)) return;
-    await sendStatementsBatch(ids);
+    const selectedOpIds = Object.keys(VIEW.sendStatements.selected).filter(id=>VIEW.sendStatements.selected[id]);
+    const entryIds = groups.filter(g=>selectedOpIds.includes(g.operatorId)).flatMap(g=>g.entries.map(e=>e.id));
+    if(!entryIds.length) return;
+    if(!confirm(`Send ${selectedOpIds.length} operator statement(s) (${entryIds.length} day-entries total) now? This cannot be undone.`)) return;
+    await sendStatementsBatch(entryIds);
   });
 
   const importInput = document.getElementById('sendImportEmails');
@@ -5774,6 +5913,19 @@ function wireSendStatements(actor, effectiveOp){
       openEmailImportPreviewModal(parsed);
     }catch(err){ toast('Could not read that file: ' + err.message); }
     importInput.value = '';
+  });
+
+  const importMasterInput = document.getElementById('sendImportMasterList');
+  if(importMasterInput) importMasterInput.addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    try{
+      const buf = await file.arrayBuffer();
+      const parsed = await parseBusOperatorsSummaryWorkbook(buf);
+      if(!parsed.length){ toast('No BUS NAME/EMAIL columns found under a recognized terminal section.'); return; }
+      openMasterListImportPreviewModal(parsed);
+    }catch(err){ toast('Could not read that file: ' + err.message); }
+    importMasterInput.value = '';
   });
 }
 
