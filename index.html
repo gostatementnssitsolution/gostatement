@@ -553,6 +553,11 @@ function operatorsFromLedgerSeed(){
 
 /* ---------------- entry status (draft -> pre-finalized -> finalized) ---------------- */
 const STATUS_LABEL = { draft:'Draft', prefinalized:'Pre-Finalized', finalized:'Finalized' };
+// Categorizes every manually-added deduction/addition (RFID charge, refund,
+// undersales correction, etc.) so admin can later search "which operators
+// did we refund" instead of reading every ledger row one by one.
+const ADJUSTMENT_TYPES = ['Refund', 'RFID Charge', 'Undersales', 'Penalty', 'Correction', 'Other'];
+const ADJUSTMENT_TYPE_COLOR = { 'Refund':'var(--accent)', 'RFID Charge':'var(--bad)', 'Undersales':'var(--bad)', 'Penalty':'var(--bad)', 'Correction':'var(--good)', 'Other':'var(--ink-faint)' };
 const STATUS_PILL = { draft:'pill-neutral', prefinalized:'pill-accent', finalized:'pill-good' };
 function getEntryStatus(terminal, company, date){
   const e = STATE.entries[entryKey(terminal, company, date)];
@@ -726,6 +731,8 @@ const VIEW = {
   manualInvoice: { terminal:'KT', period: new Date().toISOString().slice(0,7), operatorId:null, expandedId:null },
   ledgerExpandedKey: null,
   selectedOperatorId: null, // which of MY_OPERATORS is active, for a multi-operator login
+  adjSearchQuery: '',
+  adjSearchType: 'ALL',
 };
 
 /* ============================================================
@@ -1542,9 +1549,33 @@ function rowDeductionsAdditions(terminal, company, date, row){
   }
   for(const adj of adjustments){
     if(!adj.amount) continue;
-    (adj.amount < 0 ? deductions : additions).push({ label: adj.label || 'Adjustment', amount: adj.amount });
+    (adj.amount < 0 ? deductions : additions).push({ label: adj.label || 'Adjustment', amount: adj.amount, type: adj.type || 'Other' });
   }
   return { deductions, additions, hasItems: !!(items && Object.keys(items).length), note: entry && entry.note };
+}
+
+// Scans every manually-added deduction/addition across ALL operators, ALL
+// terminals, ALL dates (not scoped to whatever date-range filter the ledger
+// happens to be on) — so admin can type "refund" and immediately see every
+// operator that was ever refunded, instead of opening each ledger row one
+// by one. Matches on label text, type, or operator/company code.
+function searchAdjustments(query, typeFilter){
+  const q = (query||'').trim().toLowerCase();
+  const results = [];
+  for(const key in STATE.entries){
+    const entry = STATE.entries[key];
+    if(!entry.adjustments || !entry.adjustments.length) continue;
+    const [terminal, company, date] = key.split('|');
+    for(const adj of entry.adjustments){
+      if(!adj.amount) continue;
+      const type = adj.type || 'Other';
+      if(typeFilter && typeFilter !== 'ALL' && type !== typeFilter) continue;
+      if(q && !(adj.label||'').toLowerCase().includes(q) && !type.toLowerCase().includes(q) && !company.toLowerCase().includes(q)) continue;
+      results.push({ terminal, company, date, type, label: adj.label || 'Adjustment', amount: Number(adj.amount) });
+    }
+  }
+  results.sort((a,b)=> a.date < b.date ? 1 : (a.date > b.date ? -1 : 0));
+  return results;
 }
 
 /* ---------------- reconciliation ---------------- */
@@ -1573,8 +1604,8 @@ function openRowDetailModal(terminal, company, date){
   const actor = currentActor();
   const isAdmin = actor && actor.type === 'admin';
   const line = (it, color) => `
-    <div style="display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px solid var(--border); font-size:13px;">
-      <span style="color:var(--ink-soft);">${esc(it.label)}</span><span class="num" style="color:${color};">${it.amount<0?'−':'+'}${fmtAbs(it.amount)}</span>
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid var(--border); font-size:13px;">
+      <span style="color:var(--ink-soft); display:flex; align-items:center; gap:6px;">${esc(it.label)}${it.type ? `<span class="pill" style="font-size:10px; padding:1px 6px; background:${ADJUSTMENT_TYPE_COLOR[it.type]||'var(--ink-faint)'}22; color:${ADJUSTMENT_TYPE_COLOR[it.type]||'var(--ink-faint)'};">${esc(it.type)}</span>` : ''}</span><span class="num" style="color:${color};">${it.amount<0?'−':'+'}${fmtAbs(it.amount)}</span>
     </div>`;
   openModal(`
     <h3>${esc(company)} — ${fmtDate(date)}</h3>
@@ -1599,6 +1630,9 @@ function openRowDetailModal(terminal, company, date){
     <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--border);">
       <div class="eyebrow" style="margin-bottom:8px;">+ Add a deduction or addition (e.g. RFID charge, extra pickup fee)</div>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <select id="rowDetailAdjType" style="padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); color:var(--ink);">
+          ${ADJUSTMENT_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('')}
+        </select>
         <input type="text" id="rowDetailAdjLabel" placeholder="Label — e.g. RFID Charge" style="flex:1.4; min-width:160px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); color:var(--ink);">
         <input type="number" step="0.01" id="rowDetailAdjAmount" placeholder="Amount (+ addition / − deduction)" style="flex:1; min-width:140px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); color:var(--ink);">
         <button class="btn btn-sm btn-accent" id="rowDetailAddBtn">Add</button>
@@ -1609,13 +1643,14 @@ function openRowDetailModal(terminal, company, date){
   document.getElementById('rowDetailOk').addEventListener('click', closeModal);
   const addBtn = document.getElementById('rowDetailAddBtn');
   if(addBtn) addBtn.addEventListener('click', ()=>{
+    const type = document.getElementById('rowDetailAdjType').value;
     const label = document.getElementById('rowDetailAdjLabel').value.trim();
     const amount = parseFloat(document.getElementById('rowDetailAdjAmount').value);
     if(!label || !amount){ toast('Enter a label and a non-zero amount.'); return; }
     const rec = ensureEntryRecord(terminal, company, date);
     if(!rec) return;
     if(!rec.adjustments) rec.adjustments = [];
-    rec.adjustments.push({ label, amount });
+    rec.adjustments.push({ label, amount, type });
     // recompute the recorded net payout to include the new line, same formula the Daily Entry form uses.
     rec.final = rec.sales + rec.stdCharge + rec.manualCharge + rec.undersales + rec.adjustments.reduce((s,a)=>s+(Number(a.amount)||0),0);
     persist();
@@ -1639,8 +1674,8 @@ function ledgerRowDetailInlineHtml(terminal, company, date){
   const actor = currentActor();
   const isAdmin = actor && actor.type === 'admin';
   const line = (it, color) => `
-    <div style="display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px solid var(--border); font-size:13px;">
-      <span style="color:var(--ink-soft);">${esc(it.label)}</span><span class="num" style="color:${color};">${it.amount<0?'−':'+'}${fmtAbs(it.amount)}</span>
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid var(--border); font-size:13px;">
+      <span style="color:var(--ink-soft); display:flex; align-items:center; gap:6px;">${esc(it.label)}${it.type ? `<span class="pill" style="font-size:10px; padding:1px 6px; background:${ADJUSTMENT_TYPE_COLOR[it.type]||'var(--ink-faint)'}22; color:${ADJUSTMENT_TYPE_COLOR[it.type]||'var(--ink-faint)'};">${esc(it.type)}</span>` : ''}</span><span class="num" style="color:${color};">${it.amount<0?'−':'+'}${fmtAbs(it.amount)}</span>
     </div>`;
   return `
     <div style="width:100%;">
@@ -1668,6 +1703,9 @@ function ledgerRowDetailInlineHtml(terminal, company, date){
       <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--border);">
         <div class="eyebrow" style="margin-bottom:8px;">+ Add a deduction or addition (e.g. RFID charge, extra pickup fee)</div>
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <select id="ledgerAdjType" style="padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--ink);">
+            ${ADJUSTMENT_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('')}
+          </select>
           <input type="text" id="ledgerAdjLabel" placeholder="Label — e.g. RFID Charge" style="flex:1.4; min-width:160px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--ink);">
           <input type="number" step="0.01" id="ledgerAdjAmount" placeholder="Amount (+ addition / − deduction)" style="flex:1; min-width:140px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--ink);">
           <button class="btn btn-sm btn-accent" id="ledgerAddBtn" data-terminal="${terminal}" data-company="${esc(company)}" data-date="${date}">Add</button>
@@ -2558,6 +2596,7 @@ function adminLedgerHtml(){
         <button class="btn btn-accent btn-sm" id="btn-export-xls">Download Excel</button>
       </div>
     </div>
+    ${adjustmentsSearchPanelHtml()}
     <div class="card table-card">
       <div class="table-toolbar">
         <input type="text" id="ledgerSearch" placeholder="Filter by operator code…" value="${esc(VIEW.ledgerSearch)}">
@@ -2566,6 +2605,51 @@ function adminLedgerHtml(){
         <span style="margin-left:auto; font-size:12.5px; color:var(--ink-faint);">${rows.length} row(s)</span>
       </div>
       ${ledgerTableHtml(rows, {showCompany:true, showTerminal:true})}
+    </div>
+  `;
+}
+
+// Cross-cutting audit tool: "which operators have we refunded / RFID-charged
+// / etc, and how much" — independent of the ledger's date-range and
+// operator-code filters above, since a refund search shouldn't require
+// first guessing the right date range.
+function adjustmentsSearchPanelHtml(){
+  const hasFilter = VIEW.adjSearchQuery.trim() || VIEW.adjSearchType !== 'ALL';
+  const results = hasFilter ? searchAdjustments(VIEW.adjSearchQuery, VIEW.adjSearchType) : [];
+  const total = results.reduce((s,r)=>s+r.amount, 0);
+  return `
+    <div class="card panel" style="margin-bottom:16px;">
+      <div class="panel-head"><h3>Search Deductions &amp; Refunds</h3></div>
+      <div class="desc" style="margin-bottom:10px;">Find every operator with a refund, RFID charge, or other manually-added adjustment — across all dates, not just the range above.</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+        <input type="text" id="adjSearchQuery" placeholder="Search by operator, label… e.g. SANI or refund" value="${esc(VIEW.adjSearchQuery)}" style="flex:1.5; min-width:200px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--ink);">
+        <select id="adjSearchType" style="padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--ink);">
+          <option value="ALL" ${VIEW.adjSearchType==='ALL'?'selected':''}>All types</option>
+          ${ADJUSTMENT_TYPES.map(t=>`<option value="${t}" ${VIEW.adjSearchType===t?'selected':''}>${t}</option>`).join('')}
+        </select>
+      </div>
+      ${!hasFilter ? `<div style="font-size:12.5px; color:var(--ink-faint);">Type a keyword or pick a type above to search.</div>` : results.length ? `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:12.5px; color:var(--ink-faint);">
+          <span>${results.length} match(es)</span>
+          <span style="font-weight:700; color:var(--ink);">Total: ${fmtMoney(total)}</span>
+        </div>
+        <div class="scrollx">
+          <table>
+            <thead><tr><th>Date</th><th>Terminal</th><th style="text-align:left;">Operator</th><th>Type</th><th style="text-align:left;">Label</th><th style="text-align:right;">Amount</th></tr></thead>
+            <tbody>
+              ${results.map(r=>`
+                <tr>
+                  <td>${fmtDate(r.date)}</td>
+                  <td><span class="pill pill-${r.terminal.toLowerCase()}">${r.terminal}</span></td>
+                  <td style="text-align:left;">${esc(r.company)}</td>
+                  <td><span class="pill" style="font-size:10px; padding:1px 6px; background:${ADJUSTMENT_TYPE_COLOR[r.type]||'var(--ink-faint)'}22; color:${ADJUSTMENT_TYPE_COLOR[r.type]||'var(--ink-faint)'};">${esc(r.type)}</span></td>
+                  <td style="text-align:left;">${esc(r.label)}</td>
+                  <td class="num" style="text-align:right; color:${r.amount<0?'var(--bad)':'var(--good)'};">${r.amount<0?'−':'+'}${fmtAbs(r.amount)}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : `<div class="empty">No matching deductions or refunds.</div>`}
     </div>
   `;
 }
@@ -2725,6 +2809,9 @@ function adminEntryHtml(){
             <div id="adjustmentsList" style="display:flex; flex-direction:column; gap:8px;">
               ${DRAFT_ADJUSTMENTS.map((a,i)=>`
                 <div style="display:flex; gap:8px; align-items:center;">
+                  <select class="adj-type" data-idx="${i}" style="padding:9px 8px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); color:var(--ink); font-size:13.5px;">
+                    ${ADJUSTMENT_TYPES.map(t=>`<option value="${t}" ${(a.type||'Other')===t?'selected':''}>${t}</option>`).join('')}
+                  </select>
                   <input type="text" class="adj-label" data-idx="${i}" value="${esc(a.label||'')}" placeholder="Label (e.g. Compensation - equipment damage)" style="flex:2; padding:9px 11px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); color:var(--ink); font-size:13.5px;">
                   <input type="number" step="0.01" class="adj-amount" data-idx="${i}" value="${a.amount}" placeholder="Amount (+ addition / − charge)" style="flex:1; padding:9px 11px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); color:var(--ink); font-size:13.5px;">
                   <button type="button" class="btn btn-sm btn-danger" data-remove-adj="${i}">Remove</button>
@@ -3448,13 +3535,14 @@ function wireMain(actor, effectiveOp){
     const terminal = ledgerAddBtn.getAttribute('data-terminal');
     const company = ledgerAddBtn.getAttribute('data-company');
     const date = ledgerAddBtn.getAttribute('data-date');
+    const type = document.getElementById('ledgerAdjType').value;
     const label = document.getElementById('ledgerAdjLabel').value.trim();
     const amount = parseFloat(document.getElementById('ledgerAdjAmount').value);
     if(!label || !amount){ toast('Enter a label and a non-zero amount.'); return; }
     const rec = ensureEntryRecord(terminal, company, date);
     if(!rec) return;
     if(!rec.adjustments) rec.adjustments = [];
-    rec.adjustments.push({ label, amount });
+    rec.adjustments.push({ label, amount, type });
     rec.final = rec.sales + rec.stdCharge + rec.manualCharge + rec.undersales + rec.adjustments.reduce((s,a)=>s+(Number(a.amount)||0),0);
     persist();
     const op = STATE.operators.find(o=>o.terminal===terminal && o.company===company);
@@ -3513,6 +3601,11 @@ function wireMain(actor, effectiveOp){
 
   const ledgerSearch = document.getElementById('ledgerSearch');
   if(ledgerSearch) ledgerSearch.addEventListener('input', ()=>{ VIEW.ledgerSearch = ledgerSearch.value; renderMain(); const el2=document.getElementById('ledgerSearch'); el2.focus(); el2.setSelectionRange(el2.value.length, el2.value.length); });
+
+  const adjSearchQuery = document.getElementById('adjSearchQuery');
+  if(adjSearchQuery) adjSearchQuery.addEventListener('input', ()=>{ VIEW.adjSearchQuery = adjSearchQuery.value; renderMain(); const el2=document.getElementById('adjSearchQuery'); el2.focus(); el2.setSelectionRange(el2.value.length, el2.value.length); });
+  const adjSearchType = document.getElementById('adjSearchType');
+  if(adjSearchType) adjSearchType.addEventListener('change', ()=>{ VIEW.adjSearchType = adjSearchType.value; renderMain(); });
 
   const reconcileSearch = document.getElementById('reconcileSearch');
   if(reconcileSearch) reconcileSearch.addEventListener('input', ()=>{ VIEW.reconcileSearch = reconcileSearch.value; renderMain(); const el2=document.getElementById('reconcileSearch'); el2.focus(); el2.setSelectionRange(el2.value.length, el2.value.length); });
@@ -3687,6 +3780,9 @@ function wireMain(actor, effectiveOp){
     const under = parseFloat(document.getElementById('entryUndersales').value)||0;
     document.getElementById('entryFinal').value = (sales - std - manual + under + adjustmentsSum()).toFixed(2);
   });
+  document.querySelectorAll('.adj-type').forEach(sel=>{
+    sel.addEventListener('change', ()=>{ DRAFT_ADJUSTMENTS[+sel.dataset.idx].type = sel.value; });
+  });
   document.querySelectorAll('.adj-label').forEach(inp=>{
     inp.addEventListener('input', ()=>{ DRAFT_ADJUSTMENTS[+inp.dataset.idx].label = inp.value; });
   });
@@ -3697,7 +3793,7 @@ function wireMain(actor, effectiveOp){
     btn.addEventListener('click', ()=>{ DRAFT_ADJUSTMENTS.splice(+btn.getAttribute('data-remove-adj'),1); renderMain(); });
   });
   const btnAddAdjustment = document.getElementById('btnAddAdjustment');
-  if(btnAddAdjustment) btnAddAdjustment.addEventListener('click', ()=>{ DRAFT_ADJUSTMENTS.push({label:'', amount:0}); renderMain(); });
+  if(btnAddAdjustment) btnAddAdjustment.addEventListener('click', ()=>{ DRAFT_ADJUSTMENTS.push({label:'', amount:0, type:'Other'}); renderMain(); });
   const entryNoteEl = document.getElementById('entryNote');
   if(entryNoteEl) entryNoteEl.addEventListener('input', ()=>{ DRAFT_NOTE = entryNoteEl.value; });
   const entryDeleteBtn = document.getElementById('entryDelete');
