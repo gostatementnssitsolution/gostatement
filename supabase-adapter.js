@@ -274,6 +274,30 @@
     return all;
   }
 
+  // All entries for one terminal + exact date, with the operator's
+  // notification email/CC and email-sent status — the data set for the
+  // "Send Statements" screen. A single day's rows are always well under the
+  // API row cap, so no pagination needed here.
+  async function loadEntriesForDate({ terminalId, entryDate }) {
+    const { data, error } = await db
+      .from("settlement_entries")
+      .select("id, entry_date, sales, std_charge, manual_charge, undersales, final_amount, items, email_sent_at, email_sent_by, operator_id, operators(id, company, notify_email, notify_email_cc)")
+      .eq("terminal_id", terminalId)
+      .eq("entry_date", entryDate);
+    if (error) throw error;
+    return (data || []).sort((a, b) => (a.operators?.company || "").localeCompare(b.operators?.company || ""));
+  }
+
+  // Triggers the send-settlement-email Edge Function, which builds the
+  // "Daily Settlement Statement" email from each entry's data and sends it
+  // through Microsoft Graph as the connected Outlook mailbox.
+  async function sendSettlementEmails(entryIds) {
+    const { data, error } = await db.functions.invoke("send-settlement-email", { body: { entryIds } });
+    if (error) { let msg = error.message; try { const b = await error.context.json(); if (b?.error) msg = b.error; } catch (_) {} throw new Error(msg); }
+    if (data?.error) throw new Error(data.error);
+    return data; // { results:[{entryId, ok, error?}], sent, failed }
+  }
+
   async function getEntry(terminalCode, company, entryDate) {
     const { data, error } = await db
       .from("settlement_entries")
@@ -519,6 +543,7 @@
     listAdmins, listAdminsWithEmail, inviteAdmin, setAdminActive, deleteAdmin, updateAdminPermissions,
     // entries
     loadEntries, getEntry, saveEntry, setEntryStatus, bulkSetStatus, deleteEntry,
+    loadEntriesForDate, sendSettlementEmails,
     // manual invoice + trip list
     loadManualInvoices, loadManualTripEntries, saveManualInvoice, saveManualTripEntries, deleteManualInvoice,
     // statements (undersales / compensation / refund / other charges)
