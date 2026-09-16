@@ -1,0 +1,551 @@
+<!doctype html>
+<meta charset="UTF-8">
+<title>GoStatement — Premium Settlement Portal</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Premium settlement tracking for 100+ bus terminals. Real-time reconciliation, PDF statements, secure operator access.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fraunces:opsz@9..144&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --ink:#0B1220; --ink-soft:#666460; --ink-faint:#9D9B96;
+    --bg:#F8F7F4; --surface:#FFFFFF; --surface-2:#FAF9F6;
+    --brand:#1A56DB; --brand-ink:#FFFFFF;
+    --accent:#0969DA; --good:#15b981; --bad:#cf222e;
+    --border:#E5E0D5; --border-soft:#F0EDE6;
+    --sidebar:#0B1220; --sidebar-ink:#E5E0D5; --sidebar-ink-dim:#9D9B96;
+    --sidebar-active:#1A2840;
+    --shadow:0 2px 8px rgba(11,18,32,.08), 0 6px 20px rgba(11,18,32,.12);
+    --shadow-sm:0 1px 3px rgba(11,18,32,.06);
+    --radius:8px;
+    --font-display:'Fraunces',ui-serif,Georgia,serif;
+    --font-body:'Inter',-apple-system,system-ui,'Segoe UI',Roboto,sans-serif;
+    --font-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;}
+  h1,h2,h3,h4,h5,h6{font-family:var(--font-display);margin:0;color:var(--ink);letter-spacing:-.02em;}
+  h1{font-size:32px;font-weight:600;line-height:1.2;}
+  h2{font-size:24px;font-weight:600;line-height:1.3;}
+  h3{font-size:20px;font-weight:600;line-height:1.3;}
+  p{margin:0;}
+  a{color:var(--brand);text-decoration:none;}
+  a:hover{text-decoration:underline;}
+  
+  .num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;}
+  
+  button,input,select{font:inherit;color:inherit;border:none;}
+  ::selection{background:rgba(26,86,219,.2);}
+  :focus-visible{outline:2px solid var(--brand);outline-offset:2px;border-radius:4px;}
+  
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface);color:var(--ink);font-weight:600;font-size:14px;cursor:pointer;transition:all .12s ease;}
+  .btn:hover{background:var(--surface-2);border-color:#D5CFC2;}
+  .btn:active{transform:translateY(1px);}
+  .btn-primary{background:var(--brand);color:var(--brand-ink);border-color:var(--brand);}
+  .btn-primary:hover{background:#1449C4;}
+  .btn-ghost{background:transparent;border-color:transparent;color:var(--ink-soft);}
+  .btn-ghost:hover{background:var(--surface-2);}
+  .btn-sm{padding:7px 12px;font-size:13px;border-radius:6px;}
+  .btn:disabled{opacity:.5;cursor:not-allowed;}
+  
+  .field{display:flex;flex-direction:column;gap:6px;}
+  .field label{font-size:13px;font-weight:600;color:var(--ink-soft);}
+  .field input,.field select{padding:10px 12px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--ink);font-size:14px;}
+  .field input:focus,.field select:focus{border-color:var(--brand);box-shadow:0 0 0 2px rgba(26,86,219,.1);}
+  
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-sm);}
+  
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;font-size:12px;font-weight:600;}
+  .pill-good{background:rgba(21,185,129,.1);color:#0B7F4A;}
+  .pill-bad{background:rgba(207,34,46,.1);color:#A61219;}
+  .pill-neutral{background:var(--surface-2);color:var(--ink-soft);border:1px solid var(--border-soft);}
+  
+  /* LAYOUT */
+  #login-screen{min-height:100vh;display:grid;grid-template-columns:1fr 1fr;}
+  @media(max-width:960px){#login-screen{grid-template-columns:1fr;} #login-brand{display:none;}}
+  
+  #login-brand{
+    background:linear-gradient(135deg,#0B1220 0%,#1A2840 100%);
+    color:var(--sidebar-ink);
+    padding:56px;
+    display:flex;
+    flex-direction:column;
+    justify-content:space-between;
+    position:relative;
+    overflow:hidden;
+  }
+  
+  .login-stats{display:flex;gap:32px;margin-top:56px;}
+  .login-stat{flex:1;}
+  .login-stat-num{font-family:var(--font-mono);font-size:28px;font-weight:700;color:#E5E0D5;margin-bottom:6px;}
+  .login-stat-label{font-size:13px;color:var(--sidebar-ink-dim);}
+  
+  .brand-logo{display:flex;align-items:center;gap:10px;font-family:var(--font-display);font-size:18px;font-weight:600;color:#FFFFFF;margin-bottom:8px;}
+  .brand-logo img{width:32px;height:32px;}
+  .brand-copy p{color:var(--sidebar-ink-dim);font-size:14px;line-height:1.6;margin-bottom:8px;}
+  
+  #login-form-wrap{display:flex;align-items:center;justify-content:center;padding:48px;background:var(--bg);}
+  #login-form{width:100%;max-width:360px;}
+  #login-form h2{font-size:28px;margin-bottom:6px;color:var(--ink);}
+  #login-form .sub{color:var(--ink-soft);font-size:14px;margin-bottom:28px;}
+  #login-form form{display:flex;flex-direction:column;gap:16px;margin-bottom:18px;}
+  #login-error{background:rgba(207,34,46,.1);color:#A61219;border-radius:6px;padding:10px 12px;font-size:13px;font-weight:600;display:none;}
+  
+  /* APP SHELL */
+  #app{display:none;min-height:100vh;grid-template-columns:240px 1fr;}
+  #app.active{display:grid;}
+  
+  #sidebar{
+    background:var(--sidebar);
+    color:var(--sidebar-ink);
+    padding:20px 14px;
+    display:flex;
+    flex-direction:column;
+    position:sticky;
+    top:0;
+    height:100vh;
+    border-right:1px solid rgba(255,255,255,.08);
+  }
+  
+  .sidebar-brand{display:flex;align-items:center;gap:8px;font-family:var(--font-display);font-size:16px;font-weight:600;color:#FFFFFF;margin-bottom:28px;padding:0 8px;}
+  .sidebar-brand img{width:28px;height:28px;}
+  
+  .nav-group{margin-bottom:18px;}
+  .nav-label{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--sidebar-ink-dim);padding:0 10px;margin-bottom:8px;}
+  .nav-item{
+    display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:6px;font-size:13.5px;
+    font-weight:500;color:var(--sidebar-ink);cursor:pointer;margin-bottom:2px;border:none;background:transparent;
+    width:100%;text-align:left;transition:all .1s ease;
+  }
+  .nav-item:hover{background:rgba(255,255,255,.05);}
+  .nav-item.active{background:var(--sidebar-active);color:#FFFFFF;}
+  
+  #sidebar-foot{margin-top:auto;padding-top:16px;border-top:1px solid rgba(255,255,255,.08);}
+  .who{display:flex;align-items:center;gap:10px;padding:8px 10px;}
+  .avatar{width:32px;height:32px;border-radius:6px;background:rgba(26,86,219,.2);color:var(--brand);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;}
+  
+  /* MAIN CONTENT */
+  #main{
+    padding:32px;
+    overflow-y:auto;
+    display:flex;
+    flex-direction:column;
+  }
+  
+  .page-header{margin-bottom:32px;}
+  .page-header h1{margin-bottom:6px;}
+  .page-header p{color:var(--ink-soft);font-size:14px;}
+  
+  /* TABLES */
+  table{border-collapse:collapse;width:100%;font-size:13.5px;}
+  th{
+    text-align:right;padding:12px 14px;font-size:10px;font-weight:700;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--ink-faint);border-bottom:1px solid var(--border);
+    white-space:nowrap;position:sticky;top:0;background:var(--bg);height:44px;
+  }
+  th:first-child,td:first-child{text-align:left;}
+  td{padding:12px 14px;border-bottom:1px solid var(--border-soft);text-align:right;white-space:nowrap;height:44px;}
+  tbody tr:hover{background:var(--surface-2);}
+  tbody tr.stripe-even{background:rgba(11,18,32,.01);}
+  
+  .table-wrap{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow-sm);}
+  
+  /* PAGINATION */
+  .pagination{display:flex;align-items:center;gap:8px;justify-content:center;margin-top:24px;padding:16px;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);}
+  .pagination button{min-width:36px;height:36px;padding:0 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);cursor:pointer;font-weight:500;transition:all .1s ease;}
+  .pagination button:hover:not(:disabled){background:var(--brand);color:white;border-color:var(--brand);}
+  .pagination button.active{background:var(--brand);color:white;border-color:var(--brand);}
+  .pagination span{color:var(--ink-soft);font-size:13px;}
+  
+  /* MODALS */
+  .modal-backdrop{position:fixed;inset:0;background:rgba(11,18,32,.5);display:none;align-items:center;justify-content:center;z-index:100;}
+  .modal-backdrop.active{display:flex;}
+  .modal{background:var(--surface);border-radius:var(--radius);box-shadow:0 10px 40px rgba(11,18,32,.2);max-width:500px;width:90%;padding:28px;}
+  .modal h2{margin-bottom:16px;}
+  .modal .actions{display:flex;gap:8px;margin-top:24px;}
+  
+  /* UTILITY */
+  .hidden{display:none!important;}
+  .text-center{text-align:center;}
+  .scrollx{overflow-x:auto;}
+  
+  /* RESPONSIVE */
+  @media(max-width:1024px){
+    #app{grid-template-columns:1fr;}
+    #sidebar{height:auto;position:relative;flex-direction:row;justify-content:space-between;}
+    #main{padding:24px;}
+  }
+</style>
+
+<div id="login-screen">
+  <div id="login-brand">
+    <div>
+      <div class="brand-logo">
+        <span>🏁</span>
+        <span style="font-size:20px;">NSS GoStatement</span>
+      </div>
+      <div class="brand-copy">
+        <p><strong>Premium settlement tracking</strong> for 100+ bus terminals across Malaysia.</p>
+      </div>
+      <div class="login-stats">
+        <div class="login-stat">
+          <div class="login-stat-num">500+</div>
+          <div class="login-stat-label">Companies managed</div>
+        </div>
+        <div class="login-stat">
+          <div class="login-stat-num">RM 2.5B</div>
+          <div class="login-stat-label">Settled YTD</div>
+        </div>
+      </div>
+    </div>
+    <div style="color:var(--sidebar-ink-dim);font-size:12px;">
+      <p style="margin:0;">🔒 Bank-grade security with Supabase RLS</p>
+      <p style="margin:8px 0 0 0;">✓ Audit logged • PDF signed • Real-time reconciliation</p>
+    </div>
+  </div>
+  
+  <div id="login-form-wrap">
+    <div id="login-form">
+      <h2>Sign in</h2>
+      <span class="sub">Enter your operator email and password</span>
+      <div id="login-error"></div>
+      <form onsubmit="handleLogin(event)">
+        <div class="field">
+          <label>Email or Operator ID</label>
+          <input type="text" id="login-email" placeholder="operator@company.com" required>
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input type="password" id="login-password" placeholder="••••••••" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Sign in</button>
+      </form>
+      <p style="color:var(--ink-faint);font-size:13px;text-align:center;">Admin: admin / Admin@2026</p>
+    </div>
+  </div>
+</div>
+
+<div id="app">
+  <div id="sidebar">
+    <div class="sidebar-brand">
+      <span>🏁</span>
+      <span>GoStatement</span>
+    </div>
+    <div style="flex:1;">
+      <div class="nav-group">
+        <div class="nav-label">Main</div>
+        <button class="nav-item active" onclick="navigateTo('dashboard')">📊 Dashboard</button>
+        <button class="nav-item" onclick="navigateTo('entries')">📝 Daily Entries</button>
+        <button class="nav-item" onclick="navigateTo('statements')">📄 Statements</button>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Admin</div>
+        <button class="nav-item" onclick="navigateTo('operators')">👥 Operators</button>
+        <button class="nav-item" onclick="navigateTo('admins')">🔐 Admins</button>
+        <button class="nav-item" onclick="navigateTo('import')">📥 Import</button>
+      </div>
+    </div>
+    <div id="sidebar-foot">
+      <div class="who">
+        <div class="avatar" id="avatar">AD</div>
+        <div>
+          <div style="font-size:12px;font-weight:600;color:white;" id="whoname">Admin</div>
+          <button class="btn btn-ghost btn-sm" onclick="handleLogout()" style="padding:4px 0;color:var(--sidebar-ink-dim);font-size:11px;">Logout</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <div id="main">
+    <!-- DASHBOARD PAGE -->
+    <div id="dashboard-page" class="page hidden">
+      <div class="page-header">
+        <h1>Dashboard</h1>
+        <p>Real-time settlement overview</p>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:32px;">
+        <div class="card" style="padding:20px;">
+          <p style="color:var(--ink-soft);font-size:12px;margin-bottom:8px;">Total Settled (Today)</p>
+          <div class="num" style="font-size:24px;font-weight:700;color:var(--brand);">RM 0.00</div>
+        </div>
+        <div class="card" style="padding:20px;">
+          <p style="color:var(--ink-soft);font-size:12px;margin-bottom:8px;">Pending Finalization</p>
+          <div class="num" style="font-size:24px;font-weight:700;color:#FF9500;">0</div>
+        </div>
+        <div class="card" style="padding:20px;">
+          <p style="color:var(--ink-soft);font-size:12px;margin-bottom:8px;">Total Entries</p>
+          <div class="num" style="font-size:24px;font-weight:700;color:var(--ink);">0</div>
+        </div>
+      </div>
+      <div class="card" style="padding:20px;">
+        <h3>Recent Statements</h3>
+        <p style="color:var(--ink-soft);margin-top:8px;">No data yet</p>
+      </div>
+    </div>
+    
+    <!-- STATEMENTS PAGE -->
+    <div id="statements-page" class="page hidden">
+      <div class="page-header">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div>
+            <h1>Statements</h1>
+            <p>Settlement statements for all operators (20 per page)</p>
+          </div>
+          <button class="btn btn-primary" onclick="exportStatements()">📥 Export All</button>
+        </div>
+      </div>
+      
+      <div class="card" style="padding:16px;margin-bottom:16px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+          <div class="field">
+            <label>Terminal</label>
+            <select id="filter-terminal"><option value="">All terminals</option></select>
+          </div>
+          <div class="field">
+            <label>Company</label>
+            <input type="text" id="filter-company" placeholder="Search company...">
+          </div>
+          <div class="field" style="justify-content:flex-end;">
+            <button class="btn btn-sm" onclick="applyFilters()">🔍 Filter</button>
+          </div>
+        </div>
+      </div>
+      
+      <div class="scrollx">
+        <table class="table-wrap">
+          <thead>
+            <tr>
+              <th>Company</th>
+              <th>Terminal</th>
+              <th>Date</th>
+              <th>Amount</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="statements-tbody">
+            <tr><td colspan="6" style="text-align:center;color:var(--ink-faint);">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      
+      <div class="pagination" id="statements-pagination">
+        <!-- Pagination controls will be inserted here -->
+      </div>
+    </div>
+    
+    <!-- OPERATORS PAGE -->
+    <div id="operators-page" class="page hidden">
+      <div class="page-header">
+        <div style="display:flex;justify-content:space-between;">
+          <div><h1>Operators</h1><p>Manage operator accounts</p></div>
+          <button class="btn btn-primary" onclick="openModal('add-operator')">+ Add Operator</button>
+        </div>
+      </div>
+      <div class="scrollx">
+        <table class="table-wrap">
+          <thead>
+            <tr>
+              <th>Company</th>
+              <th>Terminal</th>
+              <th>Email</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="operators-tbody">
+            <tr><td colspan="5" style="text-align:center;color:var(--ink-faint);">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Add Operator -->
+<div class="modal-backdrop" id="add-operator-modal">
+  <div class="modal">
+    <h2>Add Operator</h2>
+    <form onsubmit="saveOperator(event)">
+      <div class="field">
+        <label>Terminal</label>
+        <select id="op-terminal" required></select>
+      </div>
+      <div class="field">
+        <label>Company Name</label>
+        <input type="text" id="op-company" placeholder="PT. Company Name" required>
+      </div>
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="op-email" placeholder="operator@company.com" required>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn btn-ghost" onclick="closeModal('add-operator')">Cancel</button>
+        <button type="submit" class="btn btn-primary">Create</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-adapter.js"></script>
+
+<script>
+const DEMO_MODE = true; // Will switch to live Supabase after v1 validation
+let currentPage = 1;
+let pageSize = 20;
+let allStatements = [];
+
+async function handleLogin(e) {
+  e.preventDefault();
+  const email = document.getElementById('login-email').value;
+  const password = document.getElementById('login-password').value;
+  
+  try {
+    if (DEMO_MODE && email === 'admin' && password === 'Admin@2026') {
+      // Demo mode
+      localStorage.setItem('demo_user', JSON.stringify({
+        id: 'demo_admin',
+        email: email,
+        role: 'admin',
+        full_name: 'Admin User'
+      }));
+      showApp();
+    } else {
+      throw new Error('Invalid credentials');
+    }
+  } catch(err) {
+    document.getElementById('login-error').textContent = err.message;
+    document.getElementById('login-error').style.display = 'block';
+  }
+}
+
+function handleLogout() {
+  if(confirm('Logout?')) {
+    localStorage.removeItem('demo_user');
+    location.reload();
+  }
+}
+
+function showApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').classList.add('active');
+  const user = JSON.parse(localStorage.getItem('demo_user'));
+  document.getElementById('whoname').textContent = user.full_name;
+  document.getElementById('avatar').textContent = user.full_name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  navigateTo('dashboard');
+  loadData();
+}
+
+function navigateTo(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
+  document.getElementById(page + '-page').classList.remove('hidden');
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  event.target.classList.add('active');
+}
+
+async function loadData() {
+  // In production: await GoStatementLive.loadStatements()
+  // For demo, create sample data
+  allStatements = generateDemoStatements(100);
+  renderStatements();
+}
+
+function generateDemoStatements(count) {
+  const terminals = ['TBS', 'ALS', 'FAH', 'JBN', 'KUL'];
+  const companies = ['XYZ Bus', 'Golden Bus', 'Ekspres Rimau', 'Mayflower', 'TransNasional', 'Super Nice', 'KLIA'];
+  const statements = [];
+  const baseDate = new Date();
+  
+  for(let i = 0; i < count; i++) {
+    statements.push({
+      id: 'stmt_' + i,
+      company: companies[i % companies.length] + ' #' + Math.floor(i / companies.length),
+      terminal: terminals[i % terminals.length],
+      date: new Date(baseDate.getTime() - i * 86400000).toISOString().split('T')[0],
+      amount: Math.random() * 50000 + 5000,
+      status: ['finalized', 'draft'][Math.random() > 0.7 ? 0 : 1]
+    });
+  }
+  return statements.sort((a, b) => new Date(b.date) - new Date(a.date));
+}
+
+function renderStatements() {
+  const start = (currentPage - 1) * pageSize;
+  const end = start + pageSize;
+  const page = allStatements.slice(start, end);
+  
+  const tbody = document.getElementById('statements-tbody');
+  tbody.innerHTML = page.map((s, idx) => `
+    <tr class="${idx % 2 === 0 ? 'stripe-even' : ''}">
+      <td><strong>${s.company}</strong></td>
+      <td>${s.terminal}</td>
+      <td>${s.date}</td>
+      <td class="num"><strong>RM ${(s.amount).toFixed(2)}</strong></td>
+      <td><span class="pill ${s.status === 'finalized' ? 'pill-good' : 'pill-neutral'}">${s.status}</span></td>
+      <td><button class="btn btn-ghost btn-sm" onclick="viewStatement('${s.id}')">View</button></td>
+    </tr>
+  `).join('');
+  
+  renderPagination();
+}
+
+function renderPagination() {
+  const totalPages = Math.ceil(allStatements.length / pageSize);
+  let html = '<button onclick="prevPage()" ' + (currentPage === 1 ? 'disabled' : '') + '>← Prev</button>';
+  
+  for(let i = 1; i <= totalPages; i++) {
+    if(i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+      html += '<button class="' + (i === currentPage ? 'active' : '') + '" onclick="goPage(' + i + ')">' + i + '</button>';
+    } else if(i === 2 || i === totalPages - 1) {
+      html += '<span>...</span>';
+    }
+  }
+  
+  html += '<button onclick="nextPage()" ' + (currentPage === totalPages ? 'disabled' : '') + '>Next →</button>';
+  html += '<span style="margin-left:16px;">Page ' + currentPage + ' of ' + totalPages + '</span>';
+  
+  document.getElementById('statements-pagination').innerHTML = html;
+}
+
+function prevPage() { if(currentPage > 1) { currentPage--; renderStatements(); } }
+function nextPage() { currentPage++; renderStatements(); }
+function goPage(p) { currentPage = p; renderStatements(); }
+
+function viewStatement(id) {
+  const stmt = allStatements.find(s => s.id === id);
+  alert('View statement: ' + stmt.company + ' (' + stmt.date + ')\nRM ' + stmt.amount.toFixed(2));
+}
+
+function exportStatements() {
+  const csv = [['Company', 'Terminal', 'Date', 'Amount', 'Status']];
+  allStatements.forEach(s => csv.push([s.company, s.terminal, s.date, s.amount.toFixed(2), s.status]));
+  const str = csv.map(r => r.map(c => '"' + c + '"').join(',')).join('\n');
+  const blob = new Blob([str], {type: 'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'statements.csv';
+  a.click();
+}
+
+function applyFilters() {
+  // Implementation
+}
+
+function openModal(id) { document.getElementById(id + '-modal').classList.add('active'); }
+function closeModal(id) { document.getElementById(id + '-modal').classList.remove('active'); }
+
+function saveOperator(e) {
+  e.preventDefault();
+  alert('Operator created (demo)');
+  closeModal('add-operator');
+}
+
+// Initialize
+if(localStorage.getItem('demo_user')) showApp();
+</script>
