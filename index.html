@@ -715,9 +715,22 @@ async function cloudLoadAll(){
 
 function startCloudRealtime(onChanged){
   if(!window.GoStatementLive || __cloudChannel) return;
-  __cloudChannel = GoStatementLive.subscribeToChanges(async ()=>{
-    await cloudLoadAll();
-    if(typeof onChanged === 'function') onChanged();
+  // The realtime subscription watches 4 tables and fires once per table per
+  // change, so a single save can trigger 2+ callbacks almost simultaneously
+  // — and ANY operator's edit re-triggers this for EVERY other open
+  // browser. Each callback used to do a full cloudLoadAll() (all terminals,
+  // operators, admins, and 9,600+ settlement rows) straight away, which on
+  // a slow laptop/connection is exactly what made things feel laggy and
+  // caused the page to visibly re-flash for changes that had nothing to do
+  // with what you were looking at. Debounce so a burst of change events
+  // becomes one reload, not one per event.
+  let realtimeTimer = null;
+  __cloudChannel = GoStatementLive.subscribeToChanges(()=>{
+    clearTimeout(realtimeTimer);
+    realtimeTimer = setTimeout(async ()=>{
+      await cloudLoadAll();
+      if(typeof onChanged === 'function') onChanged();
+    }, 1200);
   });
 }
 
@@ -3501,10 +3514,21 @@ function renderMain(){
   if(VIEW.route === 'entry' && document.getElementById('importPreviewWrap')){
     document.getElementById('importPreviewWrap').innerHTML = importPreviewHtml();
   }
-  fadeInMain();
+  // The fade/slide-in and the KPI count-up look great when you actually
+  // switch pages — but renderMain() also fires on every search keystroke,
+  // toggle, and background refresh, and replaying those animations every
+  // time reads as flicker/jitter rather than motion, especially on a
+  // slower laptop or connection. Only play them when the page you're
+  // looking at has actually changed.
+  const renderIdentity = VIEW.route + '|' + (effectiveOp ? effectiveOp.id : '') + '|' + (actor.type==='admin' ? 'admin' : 'operator');
+  if(renderIdentity !== __lastRenderIdentity){
+    __lastRenderIdentity = renderIdentity;
+    fadeInMain();
+    animateKpis();
+  }
   wireMain(actor, effectiveOp);
-  animateKpis();
 }
+let __lastRenderIdentity = null;
 
 function wireMain(actor, effectiveOp){
   const isOperatorView = !!effectiveOp;
