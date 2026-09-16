@@ -734,19 +734,35 @@ function startCloudRealtime(onChanged){
   });
 }
 
-async function cloudPushEntry({ terminal, operatorId, date, sales, stdCharge, manualCharge, undersales, final, status, adjustments, note }){
-  if(!window.GoStatementLive) return;
+async function cloudPushEntry({ terminal, operatorId, date, sales, stdCharge, manualCharge, undersales, final, status, adjustments, note, items }){
+  if(!window.GoStatementLive) return false;
   const terminalId = TERMINAL_IDS[terminal];
-  if(!terminalId || !operatorId) return; // operator/terminal not yet synced from cloud
+  if(!terminalId || !operatorId){
+    // This used to fail silently — the row would look saved locally but
+    // never reach the cloud, and the NEXT full reload would wipe it back
+    // out because Supabase (not localStorage) is the real source of truth.
+    // That silent gap is exactly what made a batch of imported days
+    // "disappear" — surface it instead.
+    toast('Not saved to the cloud — this terminal/operator has not synced yet. Try "Retry sync" or reload the page, then re-save.');
+    return false;
+  }
   try{
+    // Preserve whatever itemized Excel breakdown this entry already has
+    // unless the caller explicitly passes a new one — this used to be
+    // hardcoded to {} here, silently erasing the itemization on every save
+    // (e.g. every time an admin added a deduction/refund line).
+    const existing = STATE.entries[entryKey(terminal, STATE.operators.find(o=>o.id===operatorId)?.company, date)];
+    const itemsToSave = items !== undefined ? items : (existing && existing.items) || {};
     await GoStatementLive.saveEntry({
       terminalId, operatorId, entryDate: date,
       sales, stdCharge, manualCharge, undersales, finalAmount: final,
-      items: {}, adjustments, note, status
+      items: itemsToSave, adjustments, note, status
     });
+    return true;
   }catch(err){
     console.error('GoStatement Live: cloud save failed', err);
     toast('Saved locally — cloud sync failed: ' + (err.message || err));
+    return false;
   }
 }
 function findOperatorByEmail(email){
@@ -3958,31 +3974,58 @@ function wireMain(actor, effectiveOp){
   if(btnConfirmImport) btnConfirmImport.addEventListener('click', async ()=>{
     const terminal = document.getElementById('importTerminalSel').value;
     const importStatus = document.getElementById('importStatusSel').value;
-    let created = 0;
+    const cloudConnected = window.GoStatementLive && Object.keys(TERMINAL_IDS).length > 0;
+
+    // This import used to only ever write to STATE.entries + localStorage —
+    // it never called the cloud at all. It LOOKED like it worked (the rows
+    // showed up immediately), but the next full sync from Supabase (a
+    // reload, a re-login, or even a background realtime refresh) would
+    // silently wipe those rows back out, because the cloud — not this
+    // browser — is the real source of truth. That is exactly why a whole
+    // week of imported data could vanish without any error ever showing.
+    if(!cloudConnected){
+      toast('Not connected to the cloud in this session — sign out and sign back in with the cloud admin email before importing, or this data will not be saved permanently.');
+      return;
+    }
+
+    btnConfirmImport.disabled = true;
+    let created = 0, saved = 0, failed = 0;
     for(const rec of IMPORT_PREVIEW.records){
+      btnConfirmImport.textContent = `Saving… (${saved+failed}/${IMPORT_PREVIEW.records.length})`;
       let op = STATE.operators.find(o=>o.terminal===terminal && o.company===rec.company);
       if(!op){
-        const temp = tempPasswordFor(terminal, rec.company+Date.now()+Math.random());
-        op = {
-          id: terminal+'::'+rec.company+'::'+Date.now()+Math.floor(Math.random()*1000),
-          terminal, company: rec.company,
-          email: rec.email || (rec.company.toLowerCase().replace(/[^a-z0-9]/g,'')+'@pending.example.com'),
-          passwordHash: await sha256Hex(temp), tempPasswordPlain: temp, mustChange:true, active:true
-        };
-        STATE.operators.push(op);
-        created++;
+        try{
+          const email = rec.email || (rec.company.toLowerCase().replace(/[^a-z0-9]/g,'')+'@pending.example.com');
+          const createdOp = await GoStatementLive.createOperator({ terminalCode: terminal, company: rec.company, email });
+          op = { id: createdOp.id, terminal, company: rec.company, email, passwordHash: null, mustChange:false, active:true };
+          STATE.operators.push(op);
+          created++;
+        }catch(err){
+          failed++;
+          console.error('Import: could not create operator', rec.company, err);
+          continue; // no cloud operator id — this row can't be saved, skip it
+        }
       }
       STATE.entries[entryKey(terminal, rec.company, rec.date)] = {
         sales: rec.sales, stdCharge: rec.stdCharge, manualCharge: rec.manualCharge, undersales: rec.undersales,
         final: rec.final, items: rec.items, status: importStatus, updatedAt: rec.date
       };
+      const ok = await cloudPushEntry({
+        terminal, operatorId: op.id, date: rec.date,
+        sales: rec.sales, stdCharge: rec.stdCharge, manualCharge: rec.manualCharge, undersales: rec.undersales,
+        final: rec.final, status: importStatus, adjustments: [], note: '', items: rec.items
+      });
+      if(ok) saved++; else failed++;
     }
-    const count = IMPORT_PREVIEW.records.length;
     persist();
     IMPORT_PREVIEW = null;
     VIEW.entryForm.terminal = terminal;
     renderMain();
-    toast(`Imported ${count} settlement row(s)${created ? ` · ${created} new operator account(s) created` : ''}.`);
+    if(failed){
+      toast(`Saved ${saved} row(s) to the cloud, but ${failed} failed — check the console/toasts above and re-import those.`);
+    } else {
+      toast(`Imported and saved ${saved} settlement row(s) to the cloud${created ? ` · ${created} new operator account(s) created` : ''}.`);
+    }
   });
 
   wireManualInvoice(actor, effectiveOp);
