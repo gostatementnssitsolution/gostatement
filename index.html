@@ -637,6 +637,23 @@ function persist(){
   }, 150);
 }
 
+// A search box that calls renderMain() on every keystroke re-renders the
+// ENTIRE page — including tables of hundreds/thousands of rows — for every
+// single character typed, which is what made typing feel laggy once the
+// ledger held the full 9,600+ row history. This waits for a short pause in
+// typing before actually re-rendering, then restores focus + cursor
+// position on the (freshly rebuilt) input so typing still feels continuous.
+const __renderDebounceTimers = {};
+function debounceRender(timerKey, inputIdToRefocus, wait = 220){
+  clearTimeout(__renderDebounceTimers[timerKey]);
+  __renderDebounceTimers[timerKey] = setTimeout(()=>{
+    delete __renderDebounceTimers[timerKey];
+    renderMain();
+    const el = document.getElementById(inputIdToRefocus);
+    if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  }, wait);
+}
+
 /* ============================================================
    CLOUD BRIDGE — Supabase (real backend). Falls back to pure
    localStorage above if window.GoStatementLive isn't loaded
@@ -2662,8 +2679,11 @@ function adminLedgerHtml(){
 // first guessing the right date range.
 function adjustmentsSearchPanelHtml(){
   const hasFilter = VIEW.adjSearchQuery.trim() || VIEW.adjSearchType !== 'ALL';
-  const results = hasFilter ? searchAdjustments(VIEW.adjSearchQuery, VIEW.adjSearchType) : [];
-  const total = results.reduce((s,r)=>s+r.amount, 0);
+  const allResults = hasFilter ? searchAdjustments(VIEW.adjSearchQuery, VIEW.adjSearchType) : [];
+  const total = allResults.reduce((s,r)=>s+r.amount, 0);
+  const RESULT_CAP = 300; // keep the rendered table from getting huge on a very broad search
+  const results = allResults.slice(0, RESULT_CAP);
+  const truncated = allResults.length > RESULT_CAP;
   return `
     <div class="card panel" style="margin-bottom:16px;">
       <div class="panel-head"><h3>Search Deductions &amp; Refunds</h3></div>
@@ -2677,8 +2697,8 @@ function adjustmentsSearchPanelHtml(){
       </div>
       ${!hasFilter ? `<div style="font-size:12.5px; color:var(--ink-faint);">Type a keyword or pick a type above to search.</div>` : results.length ? `
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:12.5px; color:var(--ink-faint);">
-          <span>${results.length} match(es)</span>
-          <span style="font-weight:700; color:var(--ink);">Total: ${fmtMoney(total)}</span>
+          <span>${allResults.length} match(es)${truncated ? ` — showing first ${RESULT_CAP}, narrow your search to see the rest` : ''}</span>
+          <span style="font-weight:700; color:var(--ink);">Total (all matches): ${fmtMoney(total)}</span>
         </div>
         <div class="scrollx">
           <table>
@@ -3599,7 +3619,10 @@ function wireMain(actor, effectiveOp){
   });
 
   const dirSearch = document.getElementById('dirSearch');
-  if(dirSearch) dirSearch.addEventListener('input', ()=>{ VIEW.dirSearch = dirSearch.value; renderMain(); const el2=document.getElementById('dirSearch'); el2.focus(); el2.setSelectionRange(el2.value.length, el2.value.length); });
+  if(dirSearch) dirSearch.addEventListener('input', ()=>{
+    VIEW.dirSearch = dirSearch.value;
+    debounceRender('dirSearch', 'dirSearch');
+  });
   const dirTerminal = document.getElementById('dirTerminal');
   if(dirTerminal) dirTerminal.addEventListener('change', ()=>{ VIEW.dirTerminal = dirTerminal.value; renderMain(); });
   const addBtn = document.getElementById('btn-add-operator');
@@ -3647,15 +3670,24 @@ function wireMain(actor, effectiveOp){
   });
 
   const ledgerSearch = document.getElementById('ledgerSearch');
-  if(ledgerSearch) ledgerSearch.addEventListener('input', ()=>{ VIEW.ledgerSearch = ledgerSearch.value; renderMain(); const el2=document.getElementById('ledgerSearch'); el2.focus(); el2.setSelectionRange(el2.value.length, el2.value.length); });
+  if(ledgerSearch) ledgerSearch.addEventListener('input', ()=>{
+    VIEW.ledgerSearch = ledgerSearch.value;
+    debounceRender('ledgerSearch', 'ledgerSearch');
+  });
 
   const adjSearchQuery = document.getElementById('adjSearchQuery');
-  if(adjSearchQuery) adjSearchQuery.addEventListener('input', ()=>{ VIEW.adjSearchQuery = adjSearchQuery.value; renderMain(); const el2=document.getElementById('adjSearchQuery'); el2.focus(); el2.setSelectionRange(el2.value.length, el2.value.length); });
+  if(adjSearchQuery) adjSearchQuery.addEventListener('input', ()=>{
+    VIEW.adjSearchQuery = adjSearchQuery.value;
+    debounceRender('adjSearchQuery', 'adjSearchQuery');
+  });
   const adjSearchType = document.getElementById('adjSearchType');
   if(adjSearchType) adjSearchType.addEventListener('change', ()=>{ VIEW.adjSearchType = adjSearchType.value; renderMain(); });
 
   const reconcileSearch = document.getElementById('reconcileSearch');
-  if(reconcileSearch) reconcileSearch.addEventListener('input', ()=>{ VIEW.reconcileSearch = reconcileSearch.value; renderMain(); const el2=document.getElementById('reconcileSearch'); el2.focus(); el2.setSelectionRange(el2.value.length, el2.value.length); });
+  if(reconcileSearch) reconcileSearch.addEventListener('input', ()=>{
+    VIEW.reconcileSearch = reconcileSearch.value;
+    debounceRender('reconcileSearch', 'reconcileSearch');
+  });
   document.querySelectorAll('[data-recon-view]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const [terminal, company, date] = btn.getAttribute('data-recon-view').split('|');
