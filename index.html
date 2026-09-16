@@ -119,15 +119,6 @@
   .pill-accent{background:var(--accent-soft); color:var(--accent);}
   .pill-kt{background:var(--kt-soft); color:var(--kt-ink);}
   .pill-ms{background:var(--ms-soft); color:var(--ms-ink);}
-  .terminal-strip{display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:14px; margin-bottom:18px;}
-  .terminal-card{
-    display:flex; align-items:center; gap:14px; padding:14px 16px;
-    background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow);
-  }
-  .terminal-card svg{flex:none;}
-  .terminal-card .t-name{font-weight:700; font-size:14.5px;}
-  .terminal-card .t-sub{font-size:12px; color:var(--ink-faint); margin-top:2px;}
-  .terminal-badge-inline{display:inline-flex; vertical-align:middle; margin-right:8px;}
   .hidden{display:none !important;}
   .scrollx{overflow-x:auto;}
   table{border-collapse:collapse; width:100%; font-size:13.5px;}
@@ -804,7 +795,7 @@ const VIEW = {
   sortDir: 'desc',
   entryForm: { terminal:'KT', operatorId:null, date:null },
   manualInvoice: { terminal:'KT', period: new Date().toISOString().slice(0,7), operatorId:null, expandedId:null },
-  chargeStatements: { terminal:'KT', typeFilter:'ALL', expandedId:null },
+  chargeStatements: { terminal:'KT', typeFilter:'ALL', search:'', dateFrom:'', dateTo:'', expandedId:null },
   ledgerExpandedKey: null,
   selectedOperatorId: null, // which of MY_OPERATORS is active, for a multi-operator login
   adjSearchQuery: '',
@@ -1315,29 +1306,6 @@ function currentActor(){
   return op ? { type:'operator', op } : null;
 }
 function icon(path){ return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`; }
-// A small flat-style "bus terminal" illustration, recolored per terminal via
-// the existing --kt/--ms CSS accent vars — used to give each terminal a
-// visual identity in the Overview banner, Operator Directory and dashboards
-// instead of just a text pill.
-function terminalIllustrationSvg(code, size){
-  size = size || 56;
-  const accent = code==='KT' ? 'var(--kt)' : 'var(--ms)';
-  return `<svg width="${size}" height="${size}" viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <rect x="3" y="3" width="90" height="90" rx="20" fill="${accent}" fill-opacity="0.12"/>
-    <path d="M18 36l30-17 30 17v6H18z" fill="${accent}"/>
-    <rect x="22" y="42" width="52" height="26" rx="2.5" fill="var(--surface)" stroke="${accent}" stroke-opacity="0.35"/>
-    <rect x="28" y="48" width="11" height="11" rx="1.6" fill="${accent}" fill-opacity="0.55"/>
-    <rect x="42.5" y="48" width="11" height="11" rx="1.6" fill="${accent}" fill-opacity="0.55"/>
-    <rect x="57" y="48" width="11" height="11" rx="1.6" fill="${accent}" fill-opacity="0.55"/>
-    <rect x="40" y="60" width="16" height="8" rx="1.2" fill="${accent}"/>
-    <path d="M22 68h52v3a3 3 0 0 1-3 3H25a3 3 0 0 1-3-3z" fill="${accent}" fill-opacity="0.4"/>
-    <rect x="10" y="66" width="32" height="15" rx="3.5" fill="${accent}"/>
-    <rect x="14" y="70" width="9" height="7" rx="1.2" fill="#ffffff" fill-opacity="0.9"/>
-    <rect x="26" y="70" width="9" height="7" rx="1.2" fill="#ffffff" fill-opacity="0.9"/>
-    <circle cx="17" cy="82" r="3.6" fill="#2b2f36"/>
-    <circle cx="36" cy="82" r="3.6" fill="#2b2f36"/>
-  </svg>`;
-}
 const ICONS = {
   dashboard: icon('<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'),
   ledger: icon('<path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z"/><path d="M14 3v5h5"/><path d="M8 13h8M8 17h5"/>'),
@@ -2404,13 +2372,10 @@ function operatorDashboardHtml(op){
 
   return `
     <div id="topbar">
-      <div style="display:flex; align-items:center; gap:12px;">
-        ${terminalIllustrationSvg(op.terminal, 44)}
-        <div>
+      <div>
         <h1>Dashboard — ${esc(op.company)}</h1>
         <div class="desc"><span class="pill pill-${op.terminal.toLowerCase()}">${TERMINALS[op.terminal].name}</span> &middot; ${esc(op.email)}</div>
         ${(op.companyName || op.companyAddress) ? `<div class="desc" style="margin-top:2px;">${op.companyName ? `<b>${esc(op.companyName)}</b>` : ''}${op.companyName && op.companyAddress ? ' — ' : ''}${esc(op.companyAddress||'')}</div>` : ''}
-        </div>
       </div>
       <div class="topbar-actions">${rangeControlHtml(op.terminal)}<button class="btn btn-sm" id="btn-my-company-info">Edit Company Info</button><button class="btn btn-accent btn-sm" id="btn-gen-statement">Download Statement (PDF)</button></div>
     </div>
@@ -2600,17 +2565,6 @@ function adminOverviewHtml(){
         ${rangeControlHtml(terms[0])}
         <button class="btn btn-accent btn-sm" id="btn-terminal-statement">Generate Terminal Statement</button>
       </div>
-    </div>
-
-    <div class="terminal-strip">
-      ${terms.map(t=>`
-        <div class="terminal-card">
-          ${terminalIllustrationSvg(t, 52)}
-          <div>
-            <div class="t-name">${esc(TERMINALS[t].name)}</div>
-            <div class="t-sub">${STATE.operators.filter(o=>o.terminal===t && o.active!==false).length} active operator(s)</div>
-          </div>
-        </div>`).join('')}
     </div>
 
     <div class="kpi-grid">
@@ -4870,21 +4824,51 @@ function chargeStatementRowHtml(stmt, opts){
   `;
 }
 
+// Applies the shared type / date-range (+ optional operator name) filters
+// used by both the admin and operator Statements tables.
+function filterChargeStatements(stmts, opts){
+  const v = VIEW.chargeStatements;
+  let out = stmts;
+  if(v.typeFilter !== 'ALL') out = out.filter(s=>s.type===v.typeFilter);
+  if(v.dateFrom) out = out.filter(s=>s.statement_date >= v.dateFrom);
+  if(v.dateTo) out = out.filter(s=>s.statement_date <= v.dateTo);
+  if(opts.showOperator && v.search.trim()){
+    const q = v.search.trim().toLowerCase();
+    out = out.filter(s=> (s.operators?s.operators.company:'').toLowerCase().includes(q) || s.statement_no.toLowerCase().includes(q));
+  }
+  return out;
+}
+function chargeStatementFilterControlsHtml(opts){
+  const v = VIEW.chargeStatements;
+  return `
+    ${opts.showOperator?`<input type="text" id="csSearch" class="btn btn-sm" placeholder="Search operator or statement no." value="${esc(v.search)}" style="min-width:200px;">`:''}
+    <select id="csTypeFilter" class="btn btn-sm">
+      <option value="ALL" ${v.typeFilter==='ALL'?'selected':''}>All types</option>
+      ${Object.entries(STATEMENT_TYPES).map(([k,val])=>`<option value="${k}" ${v.typeFilter===k?'selected':''}>${val.label}</option>`).join('')}
+    </select>
+    <input type="date" id="csDateFrom" class="btn btn-sm" value="${v.dateFrom||''}" title="From date">
+    <input type="date" id="csDateTo" class="btn btn-sm" value="${v.dateTo||''}" title="Until date">
+    ${(v.typeFilter!=='ALL'||v.dateFrom||v.dateTo||v.search) ? `<button class="btn btn-sm" id="btn-cs-clear-filters">Clear filters</button>` : ''}
+  `;
+}
+
 function adminChargeStatementsHtml(){
   const terminalId = TERMINAL_IDS[VIEW.chargeStatements.terminal];
   const key = terminalId ? 'term|'+terminalId : null;
   const loaded = terminalId && CHARGE_STATEMENTS_LOADED_KEY === key;
   if(terminalId && !loaded && !CHARGE_STATEMENTS_LOADING) loadChargeStatementsForView();
-  const loading = !loaded;
-  let stmts = loaded ? CHARGE_STATEMENTS_CACHE : [];
-  if(VIEW.chargeStatements.typeFilter !== 'ALL') stmts = stmts.filter(s=>s.type===VIEW.chargeStatements.typeFilter);
+  const loading = !loaded && !CHARGE_STATEMENTS_LOAD_ERROR;
+  const allStmts = loaded ? CHARGE_STATEMENTS_CACHE : [];
+  const stmts = filterChargeStatements(allStmts, {showOperator:true});
   const noTerminalYet = !terminalId;
 
   let statusLine;
   if(noTerminalYet) statusLine = `<span style="color:var(--bad);">Not connected to the cloud yet — <button class="btn btn-sm" id="btn-cs-retry-sync" style="padding:2px 8px;">Retry sync</button></span>`;
   else if(CHARGE_STATEMENTS_LOAD_ERROR) statusLine = `<span style="color:var(--bad);">Failed to load: ${esc(CHARGE_STATEMENTS_LOAD_ERROR)} — <button class="btn btn-sm" id="btn-cs-retry-load" style="padding:2px 8px;">Retry</button></span>`;
   else if(loading) statusLine = `<span style="color:var(--ink-faint);">Loading…</span>`;
-  else statusLine = `<span style="color:var(--ink-faint); font-size:12.5px;">${stmts.length} statement(s)</span>`;
+  else statusLine = `<span style="color:var(--ink-faint); font-size:12.5px;">${stmts.length} of ${allStmts.length} statement(s)</span>`;
+
+  const bodyMsg = CHARGE_STATEMENTS_LOAD_ERROR ? 'Could not load statements — see message above.' : (loading ? 'Loading…' : 'No statements match your filters.');
 
   return `
     <div id="topbar">
@@ -4894,20 +4878,19 @@ function adminChargeStatementsHtml(){
           <option value="KT" ${VIEW.chargeStatements.terminal==='KT'?'selected':''}>Kuala Terengganu Bus Terminal</option>
           <option value="MS" ${VIEW.chargeStatements.terminal==='MS'?'selected':''}>Melaka Sentral</option>
         </select>
-        <select id="csTypeFilter" class="btn btn-sm">
-          <option value="ALL" ${VIEW.chargeStatements.typeFilter==='ALL'?'selected':''}>All types</option>
-          ${Object.entries(STATEMENT_TYPES).map(([k,v])=>`<option value="${k}" ${VIEW.chargeStatements.typeFilter===k?'selected':''}>${v.label}</option>`).join('')}
-        </select>
         <button class="btn btn-accent btn-sm" id="btn-cs-add">+ Generate Statement</button>
       </div>
     </div>
     <div class="card table-card">
-      <div class="table-toolbar">${statusLine}</div>
+      <div class="table-toolbar" style="flex-wrap:wrap; gap:8px;">
+        ${chargeStatementFilterControlsHtml({showOperator:true})}
+        <span style="margin-left:auto;">${statusLine}</span>
+      </div>
       <div class="scrollx">
         <table>
           <thead><tr><th style="text-align:left;">Operator</th><th style="text-align:left;">Statement No.</th><th>Type</th><th>Date</th><th>Amount</th><th>Status</th><th style="text-align:right;">Actions</th></tr></thead>
           <tbody>
-            ${stmts.map(s=>chargeStatementRowHtml(s,{showOperator:true, canManage:true})).join('') || `<tr><td colspan="7" style="text-align:center; color:var(--ink-faint); padding:20px;">${loading?'Loading…':'No statements for this terminal yet.'}</td></tr>`}
+            ${stmts.map(s=>chargeStatementRowHtml(s,{showOperator:true, canManage:true})).join('') || `<tr><td colspan="7" style="text-align:center; color:var(--ink-faint); padding:20px;">${bodyMsg}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -4927,23 +4910,28 @@ function operatorChargeStatementsHtml(op){
       if(VIEW.route==='chargestatements') renderMain();
     })();
   }
-  const loading = !loaded;
-  const stmts = loaded ? CHARGE_STATEMENTS_CACHE : [];
+  const loading = !loaded && !CHARGE_STATEMENTS_LOAD_ERROR;
+  const allStmts = loaded ? CHARGE_STATEMENTS_CACHE : [];
+  const stmts = filterChargeStatements(allStmts, {showOperator:false});
   const statusLine = CHARGE_STATEMENTS_LOAD_ERROR
     ? `<span style="color:var(--bad);">Failed to load: ${esc(CHARGE_STATEMENTS_LOAD_ERROR)} — <button class="btn btn-sm" id="btn-cs-op-retry" style="padding:2px 8px;">Retry</button></span>`
-    : (loading ? `<span style="color:var(--ink-faint);">Loading…</span>` : '');
+    : (loading ? `<span style="color:var(--ink-faint);">Loading…</span>` : `<span style="color:var(--ink-faint); font-size:12.5px;">${stmts.length} of ${allStmts.length} statement(s)</span>`);
+  const bodyMsg = CHARGE_STATEMENTS_LOAD_ERROR ? 'Could not load your statements — see message above.' : (loading ? 'Loading…' : 'No statements match your filters.');
   return `
     <div id="topbar">
       <div><h1>Statements</h1><div class="desc">Undersales, Compensation, Refund &amp; Other Charges for ${esc(op.company)}</div></div>
       <div class="topbar-actions"><button class="btn btn-accent btn-sm" id="btn-cs-add">+ Generate Statement</button></div>
     </div>
-    ${statusLine ? `<div style="margin-bottom:10px; font-size:13px;">${statusLine}</div>` : ''}
     <div class="card table-card">
+      <div class="table-toolbar" style="flex-wrap:wrap; gap:8px;">
+        ${chargeStatementFilterControlsHtml({showOperator:false})}
+        <span style="margin-left:auto;">${statusLine}</span>
+      </div>
       <div class="scrollx">
         <table>
           <thead><tr><th style="text-align:left;">Statement No.</th><th>Type</th><th>Date</th><th>Amount</th><th>Status</th><th style="text-align:right;">Actions</th></tr></thead>
           <tbody>
-            ${stmts.map(s=>chargeStatementRowHtml(s,{showOperator:false, canManage: s.status!=='finalized'})).join('') || `<tr><td colspan="6" style="text-align:center; color:var(--ink-faint); padding:20px;">${loading?'Loading…':'No statements yet.'}</td></tr>`}
+            ${stmts.map(s=>chargeStatementRowHtml(s,{showOperator:false, canManage: s.status!=='finalized'})).join('') || `<tr><td colspan="6" style="text-align:center; color:var(--ink-faint); padding:20px;">${bodyMsg}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -5068,13 +5056,28 @@ function wireChargeStatements(actor, effectiveOp){
   } else {
     const terminalSel = document.getElementById('csTerminalSel');
     if(terminalSel) terminalSel.addEventListener('change', ()=>{ VIEW.chargeStatements.terminal = terminalSel.value; CHARGE_STATEMENTS_LOADED_KEY = null; renderMain(); });
-    const typeFilter = document.getElementById('csTypeFilter');
-    if(typeFilter) typeFilter.addEventListener('change', ()=>{ VIEW.chargeStatements.typeFilter = typeFilter.value; renderMain(); });
     const retrySync = document.getElementById('btn-cs-retry-sync');
     if(retrySync) retrySync.addEventListener('click', ()=> renderMain());
     const retryLoad = document.getElementById('btn-cs-retry-load');
     if(retryLoad) retryLoad.addEventListener('click', ()=>{ CHARGE_STATEMENTS_LOAD_ERROR = null; CHARGE_STATEMENTS_LOADED_KEY = null; renderMain(); });
+    const searchInput = document.getElementById('csSearch');
+    if(searchInput) searchInput.addEventListener('input', ()=>{
+      VIEW.chargeStatements.search = searchInput.value;
+      debounceRender('csSearch', 'csSearch');
+    });
   }
+
+  const typeFilter = document.getElementById('csTypeFilter');
+  if(typeFilter) typeFilter.addEventListener('change', ()=>{ VIEW.chargeStatements.typeFilter = typeFilter.value; renderMain(); });
+  const dateFrom = document.getElementById('csDateFrom');
+  if(dateFrom) dateFrom.addEventListener('change', ()=>{ VIEW.chargeStatements.dateFrom = dateFrom.value; renderMain(); });
+  const dateTo = document.getElementById('csDateTo');
+  if(dateTo) dateTo.addEventListener('change', ()=>{ VIEW.chargeStatements.dateTo = dateTo.value; renderMain(); });
+  const clearFilters = document.getElementById('btn-cs-clear-filters');
+  if(clearFilters) clearFilters.addEventListener('click', ()=>{
+    VIEW.chargeStatements.typeFilter = 'ALL'; VIEW.chargeStatements.search = ''; VIEW.chargeStatements.dateFrom = ''; VIEW.chargeStatements.dateTo = '';
+    renderMain();
+  });
 
   document.querySelectorAll('[data-cs-toggle]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
