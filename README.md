@@ -12,5 +12,4 @@ Everything is stored in the visiting browser's local storage only — there is n
 backend yet, so different browsers/devices will not see each other's data automatically.
 Use Export/Import on the Admins page to move a snapshot between devices.
 
-Default admin login: `admin` / `Admin@2026` — change this immediately after first login
-(sidebar → Password).
+
