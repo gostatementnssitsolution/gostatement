@@ -370,23 +370,14 @@
     #login-brand{ display:none; }
   }
 
-  /* Stats row on login — injected via JS if not present */
-  .login-stats{
-    display:flex; gap:28px; margin-top:22px; padding-top:18px;
-    border-top:1px solid rgba(255,255,255,.08);
-  }
-  .login-stat{ flex:1; }
-  .login-stat-num{
-    font-family:var(--font-mono); font-size:22px; font-weight:700;
-    color:#FFFFFF; letter-spacing:-.02em;
-  }
-  .login-stat-label{ font-size:11px; color:var(--sidebar-ink-dim); letter-spacing:.06em; text-transform:uppercase; margin-top:4px; }
-  
-  /* Trust badge */
+  /* Trust badge. Carries the rule that used to sit above the stats row, so
+     the feature list still gets a separator now that the row is gone. */
   .trust-badge{
-    display:inline-flex; align-items:center; gap:6px;
+    display:flex; align-items:center; gap:6px;
     font-size:11px; font-weight:600; letter-spacing:.04em;
-    color:var(--sidebar-ink-dim); margin-top:16px;
+    color:var(--sidebar-ink-dim);
+    margin-top:22px; padding-top:18px;
+    border-top:1px solid rgba(255,255,255,.08);
   }
   .trust-dot{ width:6px; height:6px; border-radius:50%; background:#10B981; box-shadow:0 0 8px rgba(16,185,129,.6); }
   
@@ -472,11 +463,6 @@
         <div class="feature"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>Real-time settlement tracking</div>
         <div class="feature"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>Itemized deductions &amp; additions</div>
         <div class="feature"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>One-click statement generation</div>
-      </div>
-      <div class="login-stats">
-        <div class="login-stat"><div class="login-stat-num">100+</div><div class="login-stat-label">Operators onboard</div></div>
-        <div class="login-stat"><div class="login-stat-num">RM 2.4B</div><div class="login-stat-label">Settled to date</div></div>
-        <div class="login-stat"><div class="login-stat-num">99.9%</div><div class="login-stat-label">Reconciliation</div></div>
       </div>
       <div class="trust-badge"><span class="trust-dot"></span> Encrypted in transit • Row-level access control • Audit-logged</div>
     </div>
