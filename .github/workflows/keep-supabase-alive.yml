@@ -1,0 +1,46 @@
+name: Keep Supabase Alive
+
+# Supabase's free plan auto-pauses a project after 7 days with no API
+# activity. This workflow makes one lightweight, read-only request to the
+# project's REST API every 3 days — well inside that window, with margin
+# for a missed or delayed scheduled run — so GoStatement's live database
+# never gets paused just because nobody happened to sign in that week.
+#
+# Uses the same anon (publishable) key already committed in config.js —
+# it's meant to be public and is scoped entirely by the project's Row
+# Level Security policies, so there's nothing sensitive to protect here.
+#
+# If this ever starts failing (wrong key, project actually paused,
+# Supabase outage, etc.), GitHub emails the repo's owner automatically
+# because it's a failed scheduled workflow — so this also doubles as a
+# cheap "is the database still reachable" monitor.
+
+on:
+  schedule:
+    - cron: "0 3 */3 * *" # every 3 days at 03:00 UTC
+  workflow_dispatch: {} # allows a manual "Run workflow" click to test it
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase REST API
+        env:
+          SUPABASE_URL: https://lckfotvteyrzyasqmygh.supabase.co
+          SUPABASE_ANON_KEY: sb_publishable__f3XxH7pJU0ANmGE9RmvVg_Xpphi1n_
+        run: |
+          status=$(curl -sS -o /tmp/response.json -w "%{http_code}" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            "$SUPABASE_URL/rest/v1/terminals?select=id&limit=1")
+
+          echo "HTTP status: $status"
+          cat /tmp/response.json
+          echo
+
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "::error::Supabase ping failed with HTTP $status — the project may be paused or the key may be wrong."
+            exit 1
+          fi
+
+          echo "Supabase project is reachable — pause clock reset."
