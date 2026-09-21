@@ -252,14 +252,21 @@
   // never existed to the app, even though it's still in Postgres. Page
   // through with .range() until a page comes back short, so the full result
   // set loads regardless of how big the table gets.
-  async function loadEntries(filters = {}) {
+  async function loadEntries(filters = {}, onProgress) {
     const PAGE = 1000;
     let all = [];
     for (let from = 0; ; from += PAGE) {
       let q = db
         .from("settlement_entries")
         .select("*, terminals(code, name), operators(company, email)")
+        // entry_date is NOT unique — ~55 rows share each date — and paging
+        // with OFFSET/LIMIT over a non-unique sort key has no stable total
+        // order, so rows sitting on a page boundary could come back twice
+        // or be skipped entirely between requests. Skipped rows silently
+        // never reached the app at all. Tiebreak on the primary key so the
+        // order is total and every row is returned exactly once.
         .order("entry_date", { ascending: false })
+        .order("id", { ascending: true })
         .range(from, from + PAGE - 1);
       if (filters.terminalCode) q = q.eq("terminals.code", filters.terminalCode);
       if (filters.operatorId) q = q.eq("operator_id", filters.operatorId);
@@ -269,6 +276,7 @@
       const { data, error } = await q;
       if (error) throw error;
       all = all.concat(data);
+      if (typeof onProgress === "function") onProgress(all.length);
       if (data.length < PAGE) break;
     }
     return all;
