@@ -1808,11 +1808,26 @@ function logout(){
 /* ============================================================
    RANGE + SEARCH HELPERS
    ============================================================ */
+// Where a custom range starts before you've picked anything: the latest
+// month in the data, so the date picker opens on recent dates instead of
+// scrolling back to the oldest record.
+function defaultCustomRange(minD, maxD){
+  if(!maxD) return { from: minD, to: maxD };
+  const firstOfLatestMonth = maxD.slice(0,8) + '01';
+  return { from: firstOfLatestMonth < minD ? minD : firstOfLatestMonth, to: maxD };
+}
 function rangeForTerminal(terminal){
   const dates = allDatesFor(terminal);
   const maxD = dates[dates.length-1];
   const minD = dates[0];
-  if(VIEW.rangeMode === 'custom' && VIEW.customFrom && VIEW.customTo){ return { from: VIEW.customFrom, to: VIEW.customTo, minD, maxD }; }
+  // Fall back per-field, not all-or-nothing. Requiring BOTH customFrom and
+  // customTo meant setting only "from" silently reverted the whole filter to
+  // every row ever recorded, while the inputs still showed the dates you'd
+  // picked — so a search for one day listed all 9,845 rows.
+  if(VIEW.rangeMode === 'custom'){
+    const d = defaultCustomRange(minD, maxD);
+    return { from: VIEW.customFrom || d.from, to: VIEW.customTo || d.to, minD, maxD };
+  }
   if(VIEW.rangeMode === 'last7'){ const idx = Math.max(0, dates.length-7); return { from: dates[idx], to: maxD, minD, maxD }; }
   if(VIEW.rangeMode === 'last30'){ const idx = Math.max(0, dates.length-30); return { from: dates[idx], to: maxD, minD, maxD }; }
   return { from: minD, to: maxD, minD, maxD };
@@ -1828,9 +1843,10 @@ function rangeControlHtml(terminal){
         <option value="custom" ${VIEW.rangeMode==='custom'?'selected':''}>Custom range / search a date</option>
       </select>
       ${VIEW.rangeMode==='custom' ? `
-        <input type="date" id="rangeFrom" value="${VIEW.customFrom||r.minD}" min="${r.minD}" max="${r.maxD}" class="date-input">
+        <input type="date" id="rangeFrom" value="${r.from}" min="${r.minD}" max="${r.maxD}" class="date-input">
         <span style="color:var(--ink-faint); font-size:13px;">to</span>
-        <input type="date" id="rangeTo" value="${VIEW.customTo||r.maxD}" min="${r.minD}" max="${r.maxD}" class="date-input">
+        <input type="date" id="rangeTo" value="${r.to}" min="${r.minD}" max="${r.maxD}" class="date-input">
+        <button class="btn btn-accent btn-sm" id="rangeApply">Apply</button>
       ` : ''}
     </div>`;
 }
@@ -1839,12 +1855,21 @@ function wireRangeControls(onChange){
   if(mode) mode.addEventListener('change', ()=>{ VIEW.rangeMode = mode.value; onChange(); });
   const from = document.getElementById('rangeFrom');
   const to = document.getElementById('rangeTo');
-  if(from) from.addEventListener('change', ()=>{ VIEW.customFrom = from.value; onChange(); });
-  if(to) to.addEventListener('change', ()=>{ VIEW.customTo = to.value; onChange(); });
-
-  if(from) from.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); VIEW.customFrom = from.value; onChange(); }});
-  if(to) to.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); VIEW.customTo = to.value; onChange(); }});
-
+  // Both dates are committed together, on Apply (or Enter) — applying each
+  // box as it changed re-filtered thousands of rows against a half-entered
+  // range, and left the two boxes disagreeing about what was actually shown.
+  const apply = ()=>{
+    if(!from || !to) return;
+    let a = from.value, b = to.value;
+    if(a && b && a > b){ const t = a; a = b; b = t; } // tolerate a backwards range
+    VIEW.customFrom = a; VIEW.customTo = b;
+    onChange();
+  };
+  const applyBtn = document.getElementById('rangeApply');
+  if(applyBtn) applyBtn.addEventListener('click', apply);
+  for(const el of [from, to]){
+    if(el) el.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); apply(); }});
+  }
 }
 
 /* ============================================================
@@ -3144,6 +3169,7 @@ function adjustmentsSearchPanelHtml(){
         </select>
         <input type="date" id="adjDateFrom" value="${VIEW.adjDateFrom}" title="From date" style="padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--ink);">
         <input type="date" id="adjDateTo" value="${VIEW.adjDateTo}" title="Until date" style="padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--ink);">
+        <button class="btn btn-accent btn-sm" id="btn-adj-apply-dates">Apply</button>
         ${(VIEW.adjDateFrom||VIEW.adjDateTo) ? `<button class="btn btn-sm" id="btn-adj-clear-dates">Clear dates</button>` : ''}
       </div>
       ${!hasFilter ? `<div style="font-size:12.5px; color:var(--ink-faint);">Type a keyword, pick a type, or set a date range above to search.</div>` : results.length ? `
@@ -4175,9 +4201,19 @@ function wireMain(actor, effectiveOp){
   const adjSearchType = document.getElementById('adjSearchType');
   if(adjSearchType) adjSearchType.addEventListener('change', ()=>{ VIEW.adjSearchType = adjSearchType.value; renderMain(); });
   const adjDateFrom = document.getElementById('adjDateFrom');
-  if(adjDateFrom) adjDateFrom.addEventListener('change', ()=>{ VIEW.adjDateFrom = adjDateFrom.value; renderMain(); });
   const adjDateTo = document.getElementById('adjDateTo');
-  if(adjDateTo) adjDateTo.addEventListener('change', ()=>{ VIEW.adjDateTo = adjDateTo.value; renderMain(); });
+  const applyAdjDates = ()=>{
+    if(!adjDateFrom || !adjDateTo) return;
+    let a = adjDateFrom.value, b = adjDateTo.value;
+    if(a && b && a > b){ const t = a; a = b; b = t; }
+    VIEW.adjDateFrom = a; VIEW.adjDateTo = b;
+    renderMain();
+  };
+  const adjApplyDates = document.getElementById('btn-adj-apply-dates');
+  if(adjApplyDates) adjApplyDates.addEventListener('click', applyAdjDates);
+  for(const el of [adjDateFrom, adjDateTo]){
+    if(el) el.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); applyAdjDates(); }});
+  }
   const adjClearDates = document.getElementById('btn-adj-clear-dates');
   if(adjClearDates) adjClearDates.addEventListener('click', ()=>{ VIEW.adjDateFrom = ''; VIEW.adjDateTo = ''; renderMain(); });
 
@@ -5301,7 +5337,7 @@ function chargeStatementFilterControlsHtml(opts){
     </select>
     <input type="date" id="csDateFrom" class="date-input" value="${v.dateFrom||''}" title="From date">
     <input type="date" id="csDateTo" class="date-input" value="${v.dateTo||''}" title="Until date">
-    ${(v.dateFrom||v.dateTo) ? `<button class="btn btn-primary btn-sm" id="btn-cs-apply-date">Apply</button>` : ''}
+    <button class="btn btn-accent btn-sm" id="btn-cs-apply-date">Apply</button>
     ${(v.typeFilter!=='ALL'||v.dateFrom||v.dateTo||v.search) ? `<button class="btn btn-sm" id="btn-cs-clear-filters">Clear</button>` : ''}
   `;
 }
@@ -5529,23 +5565,27 @@ function wireChargeStatements(actor, effectiveOp){
   const typeFilter = document.getElementById('csTypeFilter');
   if(typeFilter) typeFilter.addEventListener('change', ()=>{ VIEW.chargeStatements.typeFilter = typeFilter.value; renderMain(); });
   const dateFrom = document.getElementById('csDateFrom');
-  if(dateFrom) dateFrom.addEventListener('change', ()=>{ VIEW.chargeStatements.dateFrom = dateFrom.value; renderMain(); });
   const dateTo = document.getElementById('csDateTo');
-  if(dateTo) dateTo.addEventListener('change', ()=>{ VIEW.chargeStatements.dateTo = dateTo.value; renderMain(); });
   const clearFilters = document.getElementById('btn-cs-clear-filters');
 
+  const applyCsDates = ()=>{
+    if(!dateFrom || !dateTo) return;
+    let a = dateFrom.value, b = dateTo.value;
+    if(a && b && a > b){ const t = a; a = b; b = t; }
+    VIEW.chargeStatements.dateFrom = a; VIEW.chargeStatements.dateTo = b;
+    renderMain();
+  };
   const btnCsApply = document.getElementById('btn-cs-apply-date');
-  if(btnCsApply) btnCsApply.addEventListener('click', ()=> renderMain());
+  if(btnCsApply) btnCsApply.addEventListener('click', applyCsDates);
 
   if(clearFilters) clearFilters.addEventListener('click', ()=>{
     VIEW.chargeStatements.typeFilter = 'ALL'; VIEW.chargeStatements.search = ''; VIEW.chargeStatements.dateFrom = ''; VIEW.chargeStatements.dateTo = '';
     renderMain();
   });
 
-  const csDateFromEl = document.getElementById('csDateFrom');
-  if(csDateFromEl) csDateFromEl.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); renderMain(); }});
-  const csDateToEl = document.getElementById('csDateTo');
-  if(csDateToEl) csDateToEl.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); renderMain(); }});
+  for(const el of [dateFrom, dateTo]){
+    if(el) el.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); applyCsDates(); }});
+  }
   const csSearchEl2 = document.getElementById('csSearch');
   if(csSearchEl2) csSearchEl2.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); renderMain(); }});
 
@@ -5713,6 +5753,7 @@ function adminSendStatementsHtml(){
         </select>
         <input type="date" id="sendDateFromSel" class="btn btn-sm" value="${VIEW.sendStatements.dateFrom}" title="From date">
         <input type="date" id="sendDateToSel" class="btn btn-sm" value="${VIEW.sendStatements.dateTo}" title="Until date">
+        <button class="btn btn-accent btn-sm" id="btn-send-apply-dates">Apply</button>
         <label class="btn btn-sm" style="cursor:pointer;">Import Notification Emails<input type="file" id="sendImportEmails" accept=".xlsx" style="display:none;"></label>
         <label class="btn btn-sm" style="cursor:pointer;">Import Master Operator List<input type="file" id="sendImportMasterList" accept=".xlsx" style="display:none;"></label>
         <button class="btn btn-sm" id="btn-manage-all-emails">Manage All Operator Emails</button>
@@ -6102,18 +6143,23 @@ function wireSendStatements(actor, effectiveOp){
 
   const terminalSel = document.getElementById('sendTerminalSel');
   if(terminalSel) terminalSel.addEventListener('change', ()=>{ VIEW.sendStatements.terminal = terminalSel.value; VIEW.sendStatements.selected = {}; SEND_STATEMENTS_LOADED_KEY = null; renderMain(); });
+  // Applied together: each date used to reload the day's rows from the cloud
+  // and clear the selection on its own, so setting a range cost two reloads
+  // and silently dropped whatever had been ticked in between.
   const dateFromSel = document.getElementById('sendDateFromSel');
-  if(dateFromSel) dateFromSel.addEventListener('change', ()=>{
-    VIEW.sendStatements.dateFrom = dateFromSel.value;
-    if(VIEW.sendStatements.dateTo < dateFromSel.value) VIEW.sendStatements.dateTo = dateFromSel.value;
-    VIEW.sendStatements.selected = {}; SEND_STATEMENTS_LOADED_KEY = null; renderMain();
-  });
   const dateToSel = document.getElementById('sendDateToSel');
-  if(dateToSel) dateToSel.addEventListener('change', ()=>{
-    VIEW.sendStatements.dateTo = dateToSel.value;
-    if(VIEW.sendStatements.dateFrom > dateToSel.value) VIEW.sendStatements.dateFrom = dateToSel.value;
+  const applySendDates = ()=>{
+    if(!dateFromSel || !dateToSel) return;
+    let a = dateFromSel.value, b = dateToSel.value;
+    if(a && b && a > b){ const t = a; a = b; b = t; }
+    VIEW.sendStatements.dateFrom = a; VIEW.sendStatements.dateTo = b;
     VIEW.sendStatements.selected = {}; SEND_STATEMENTS_LOADED_KEY = null; renderMain();
-  });
+  };
+  const sendApplyBtn = document.getElementById('btn-send-apply-dates');
+  if(sendApplyBtn) sendApplyBtn.addEventListener('click', applySendDates);
+  for(const el of [dateFromSel, dateToSel]){
+    if(el) el.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); applySendDates(); }});
+  }
   const retryBtn = document.getElementById('btn-send-retry');
   if(retryBtn) retryBtn.addEventListener('click', ()=>{ SEND_STATEMENTS_LOAD_ERROR = null; SEND_STATEMENTS_LOADED_KEY = null; renderMain(); });
   const manageAllBtn = document.getElementById('btn-manage-all-emails');
