@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" fill="none" role="img" aria-label="GoStatement">
+  <title>GoStatement</title>
+  <!-- Small-size mark: the same ring geometry as logo.svg with the bar
+       detail dropped, because three bars inside a ring turn to mush below
+       about 24px (favicon, sidebar). -->
+  <path d="M36.2 12.6 A17 17 0 1 0 41 24 L31 24" stroke="currentColor" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
