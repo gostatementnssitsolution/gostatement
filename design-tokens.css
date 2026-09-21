@@ -84,7 +84,14 @@
   --z-modal: 100;
 }
 
-/* DARK MODE OVERRIDES (future) */
+/* DARK MODE
+   BOTH selectors below are required, and their values must stay in sync.
+   The media query alone only covers people whose OS is already set to
+   dark: on a light-set OS, the page's own dark toggle sets
+   data-theme="dark" and nothing here matched, so the page kept its light
+   background while the nav — which declares its own [data-theme="dark"]
+   rule in index.html — went dark by itself. That is the "only the header
+   turns dark" bug. Add any new dark token to both blocks. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #0F1117;
@@ -97,4 +104,15 @@
     --border-soft: #262C34;
     --accent: #4493F8;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #0F1117;
+  --surface: #1C1F26;
+  --surface-subtle: #262C34;
+  --text: #E5E7EB;
+  --text-soft: #A3A6AA;
+  --text-faint: #6B6E73;
+  --border: #30363D;
+  --border-soft: #262C34;
+  --accent: #4493F8;
 }
