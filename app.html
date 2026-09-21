@@ -263,6 +263,15 @@
     background:rgba(255,255,255,.2); color:#fff; border:1px solid rgba(255,255,255,.5);
     border-radius:6px; padding:4px 12px; font-size:12.5px; font-weight:700; cursor:pointer;
   }
+  /* Push the page down by the banner's measured height so it never covers
+     the heading underneath (it wraps to two lines on a phone). */
+  body.has-cloud-status{ padding-top:var(--cloud-status-h, 52px); }
+  /* Desktop only — below 760px the sidebar becomes a horizontal top bar
+     with height:auto, and forcing a viewport height on it blows up the
+     whole mobile layout. */
+  @media (min-width:761px){
+    body.has-cloud-status #sidebar{ top:var(--cloud-status-h, 52px); height:calc(100vh - var(--cloud-status-h, 52px)); }
+  }
   .toast{
     background:var(--ink); color:var(--bg); padding:12px 16px; border-radius:9px; font-size:13.5px; font-weight:600;
     box-shadow:var(--shadow); animation:toastin .18s ease;
@@ -931,7 +940,11 @@ function renderCloudStatus(){
     bar.style.display = 'flex';
   } else {
     bar.style.display = 'none';
+    document.body.classList.remove('has-cloud-status');
+    return;
   }
+  document.body.style.setProperty('--cloud-status-h', bar.offsetHeight + 'px');
+  document.body.classList.add('has-cloud-status');
 }
 
 // Terminals + operators + admins: small, and nothing renders meaningfully
@@ -1103,7 +1116,10 @@ function clearSession(){ sessionStorage.removeItem(SESSION_KEY); }
 const VIEW = {
   route: 'dashboard',
   adminTerminal: 'ALL',
-  rangeMode: 'last30',
+  // Default to the full history: the dashboard KPIs are the headline
+  // figures, and defaulting them to a 30-day slice made the totals look
+  // like the whole picture when they weren't.
+  rangeMode: 'all',
   customFrom: null,
   customTo: null,
   viewingAsOperatorId: null,
