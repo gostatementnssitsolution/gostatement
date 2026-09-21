@@ -22,7 +22,13 @@
   
   --success: #15b981;
   --success-soft: rgba(21, 185, 129, 0.1);
-  
+
+  /* "Reconciled / good" green used by index.html's mock UI, PDF stamp, and
+     security-section accents — kept distinct from --success since it's a
+     slightly different shade tuned for those specific surfaces. */
+  --good: #0B7F4A;
+  --good-soft: #E6F7ED;
+
   --error: #cf222e;
   --error-soft: rgba(207, 34, 46, 0.1);
   

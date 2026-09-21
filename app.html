@@ -546,7 +546,6 @@ const TERMINALS = {
 
 </script>
 <script src="./config.js"></script>
-<script src="./pagination-enhancer.js"></script>
 <script src="./supabase-adapter.js"></script>
 <script>
 /* ============================================================
@@ -585,6 +584,15 @@ function fmtDateShort(iso){
   return d.toLocaleDateString('en-MY', {day:'2-digit', month:'short'});
 }
 function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// `new Date().toISOString()` is UTC — for roughly 8 hours after local
+// midnight in Malaysia (UTC+8) that yields YESTERDAY's date, silently
+// shifting "today" defaults by a day. Build the ISO string from local
+// date parts instead.
+function localToday(){
+  const d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function localMonth(){ return localToday().slice(0,7); }
 function el(html){ const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; }
 function initials(str){
   return str.replace(/[^A-Za-z0-9 ]/g,'').trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase() || '??';
@@ -593,15 +601,29 @@ async function sha256Hex(str){
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
 }
-function djb2(str){
-  let h = 5381;
-  for(let i=0;i<str.length;i++){ h = ((h*33) ^ str.charCodeAt(i)) >>> 0; }
-  return h >>> 0;
+function randomSaltHex(){
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), b=>b.toString(16).padStart(2,'0')).join('');
 }
+// Per-user salted hash for the legacy local-only (single-browser) login
+// path. Real accounts are authenticated by Supabase Auth instead — this only
+// protects the pre-migration/offline fallback stored in localStorage.
+async function hashPassword(password, salt){ return sha256Hex(salt + ':' + password); }
+// Rows saved before per-user salting have no `salt` — fall back to the old
+// unsalted hash so existing local sessions keep working; callers that manage
+// to verify via that path should re-save with a fresh salt to upgrade it.
+async function verifyPassword(password, hash, salt){
+  if(salt) return (await hashPassword(password, salt)) === hash;
+  return (await sha256Hex(password)) === hash;
+}
+// Cryptographically random — NOT derived from terminal/company, so it can't
+// be precomputed by anyone who can read this client-side source. Excludes
+// visually ambiguous characters (0/O, 1/I) to stay easy to read aloud/type.
+const TEMP_PW_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 function tempPasswordFor(terminal, company){
-  const h = djb2(terminal+'|'+company+'|salt-gerbang').toString(36).toUpperCase().padStart(6,'0').slice(0,6);
   const stub = company.replace(/[^A-Za-z0-9]/g,'').slice(0,3).toUpperCase() || 'OPR';
-  return `${terminal}${stub}-${h}`;
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
+  const code = Array.from(bytes, b => TEMP_PW_ALPHABET[b % TEMP_PW_ALPHABET.length]).join('');
+  return `${terminal}${stub}-${code}`;
 }
 function toast(msg){
   const wrap = document.getElementById('toast-wrap');
@@ -783,20 +805,27 @@ async function ensureSeed(){
     }
     return;
   }
-  const admins = [{ id:'admin', name:'Administrator', email:null, passwordHash: await sha256Hex('Admin@2026'), mustChange:false, active:true }];
+  // No known default password: a fresh browser gets a random one-time admin
+  // password, shown once via showFreshAdminCredentialModal() during boot()
+  // and forced to change on first login (mustChange:true).
+  const adminSalt = randomSaltHex();
+  const adminTemp = 'ADMIN-' + Array.from(crypto.getRandomValues(new Uint8Array(6)), b=>TEMP_PW_ALPHABET[b % TEMP_PW_ALPHABET.length]).join('');
+  const admins = [{ id:'admin', name:'Administrator', email:null, passwordHash: await hashPassword(adminTemp, adminSalt), passwordSalt: adminSalt, tempPasswordPlain: adminTemp, mustChange:true, active:true }];
   const opDefs = operatorsFromLedgerSeed();
   const operators = [];
   for(const o of opDefs){
     if(!o.email) continue;
     const temp = tempPasswordFor(o.terminal, o.company);
+    const salt = randomSaltHex();
     operators.push({
       id: o.id, terminal: o.terminal, company: o.company, email: o.email,
-      passwordHash: await sha256Hex(temp), tempPasswordPlain: temp,
+      passwordHash: await hashPassword(temp, salt), passwordSalt: salt, tempPasswordPlain: temp,
       mustChange: true, active: true
     });
   }
   STATE = { admins, operators, entries: {} };
   persist();
+  return { freshAdmin: admins[0] };
 }
 // Writing the FULL state (STATE.entries alone is now 9,600+ real settlement
 // rows) to localStorage on every single click — persist() used to do this
@@ -977,9 +1006,9 @@ const VIEW = {
   reconcileSearch: '',
   sortDir: 'desc',
   entryForm: { terminal:'KT', operatorId:null, date:null },
-  manualInvoice: { terminal:'KT', period: new Date().toISOString().slice(0,7), operatorId:null, expandedId:null },
+  manualInvoice: { terminal:'KT', period: localMonth(), operatorId:null, expandedId:null },
   chargeStatements: { terminal:'KT', typeFilter:'ALL', search:'', dateFrom:'', dateTo:'', expandedId:null },
-  sendStatements: { terminal:'KT', dateFrom: new Date().toISOString().slice(0,10), dateTo: new Date().toISOString().slice(0,10), selected:{} },
+  sendStatements: { terminal:'KT', dateFrom: localToday(), dateTo: localToday(), selected:{} },
   ledgerExpandedKey: null,
   selectedOperatorId: null, // which of MY_OPERATORS is active, for a multi-operator login
   adjSearchQuery: '',
@@ -1340,13 +1369,18 @@ async function handleLogin(e){
   }
 
   // 2) Legacy local-hash login (pre-migration accounts still in this browser).
-  const hash = await sha256Hex(pw);
   const admin = findAdminByLoginId(idVal);
   if(admin && admin.active !== false){
-    if(hash === admin.passwordHash){ setSession({ type:'admin', adminId: admin.id }); enterApp(); return; }
+    if(admin.passwordHash && await verifyPassword(pw, admin.passwordHash, admin.passwordSalt)){
+      if(!admin.passwordSalt){ admin.passwordSalt = randomSaltHex(); admin.passwordHash = await hashPassword(pw, admin.passwordSalt); persist(); }
+      setSession({ type:'admin', adminId: admin.id }); enterApp(); return;
+    }
   } else {
     const op = findOperatorByEmail(idVal);
-    if(op && op.active && hash === op.passwordHash){ setSession({ type:'operator', id: op.id }); enterApp(); return; }
+    if(op && op.active && op.passwordHash && await verifyPassword(pw, op.passwordHash, op.passwordSalt)){
+      if(!op.passwordSalt){ op.passwordSalt = randomSaltHex(); op.passwordHash = await hashPassword(pw, op.passwordSalt); persist(); }
+      setSession({ type:'operator', id: op.id }); enterApp(); return;
+    }
   }
   errBox.textContent = 'Invalid ID or password. Please check and try again.';
   errBox.style.display = 'block';
@@ -3350,9 +3384,9 @@ function openChangePasswordModal(){
     }
 
     // Legacy local-hash account (pre-migration).
-    const curHash = await sha256Hex(cur);
-    if(curHash !== target.passwordHash){ errEl.textContent='Current password is incorrect.'; errEl.style.display='block'; return; }
-    target.passwordHash = await sha256Hex(n1);
+    if(!(await verifyPassword(cur, target.passwordHash, target.passwordSalt))){ errEl.textContent='Current password is incorrect.'; errEl.style.display='block'; return; }
+    target.passwordSalt = randomSaltHex();
+    target.passwordHash = await hashPassword(n1, target.passwordSalt);
     target.mustChange = false;
     if(target.tempPasswordPlain) delete target.tempPasswordPlain;
     persist();
@@ -3481,6 +3515,10 @@ function openAddOperatorModal(){
     const terminal = document.getElementById('newTerminal').value;
     const errEl = document.getElementById('addOpErr');
     if(findOperatorByEmail(email)){ errEl.textContent='This email is already registered.'; errEl.style.display='block'; return; }
+    // "|" is the internal separator used to build the entries lookup key
+    // (see entryKey()) — reject it here rather than let a company name
+    // containing it end up unable to be looked back up reliably.
+    if(company.includes('|')){ errEl.textContent='Company name cannot contain the "|" character.'; errEl.style.display='block'; return; }
     errEl.style.display='none';
 
     // Cloud path: create the directory record + a REAL Supabase Auth login
@@ -3518,8 +3556,9 @@ function openAddOperatorModal(){
 
     // Legacy local-only fallback (no Supabase connection available).
     const id = terminal+'::'+company+'::'+Date.now();
-    const temp = tempPasswordFor(terminal, company+Date.now());
-    const op = { id, terminal, company, email, passwordHash: await sha256Hex(temp), tempPasswordPlain: temp, mustChange:true, active:true };
+    const temp = tempPasswordFor(terminal, company);
+    const salt = randomSaltHex();
+    const op = { id, terminal, company, email, passwordHash: await hashPassword(temp, salt), passwordSalt: salt, tempPasswordPlain: temp, mustChange:true, active:true };
     STATE.operators.push(op);
     persist();
     showCredentialModal(op);
@@ -3537,6 +3576,23 @@ function showCredentialModal(op){
     <div class="modal-actions"><button class="btn btn-primary" id="credOk">Done</button></div>
   `);
   document.getElementById('credOk').addEventListener('click', closeModal);
+}
+// Shown once, right after ensureSeed() generates this browser's first local
+// admin account with a random (not hardcoded) password. There is no other
+// channel to disclose it through — this app instance has no cloud backend
+// connected yet — so it's shown on-screen with an explicit "log in and
+// change it now" instruction, matching the mustChange:true forced next step.
+function showFreshAdminCredentialModal(admin){
+  openModal(`
+    <h3>Local admin account created</h3>
+    <span class="sub">This browser has no cloud connection configured, so a local-only administrator account was created with a random one-time password. Log in and change it immediately — this is shown only once.</span>
+    <div class="credential-box">
+      <div><b>Login ID:</b> admin</div>
+      <div><b>Temporary password:</b> ${esc(admin.tempPasswordPlain)}</div>
+    </div>
+    <div class="modal-actions"><button class="btn btn-primary" id="freshAdminCredOk">Got it</button></div>
+  `);
+  document.getElementById('freshAdminCredOk').addEventListener('click', closeModal);
 }
 function openAddAdminModal(){
   const cloudConnected = window.GoStatementLive && Object.keys(TERMINAL_IDS).length > 0;
@@ -3614,7 +3670,8 @@ function openAddAdminModal(){
     if(!id){ errEl.textContent='Login ID is required.'; errEl.style.display='block'; return; }
     if(findAdminByLoginId(id) || (email && findAdminByLoginId(email))){ errEl.textContent='This login ID or email is already in use.'; errEl.style.display='block'; return; }
     if(pw !== pw2){ errEl.textContent='Password confirmation does not match.'; errEl.style.display='block'; return; }
-    STATE.admins.push({ id, name, email, passwordHash: await sha256Hex(pw), mustChange:false, active:true });
+    const newAdminSalt = randomSaltHex();
+    STATE.admins.push({ id, name, email, passwordHash: await hashPassword(pw, newAdminSalt), passwordSalt: newAdminSalt, mustChange:false, active:true });
     persist();
     closeModal();
     renderMain();
@@ -3905,7 +3962,7 @@ function wireMain(actor, effectiveOp){
   const exportDataBtn = document.getElementById('btn-export-data');
   if(exportDataBtn) exportDataBtn.addEventListener('click', async ()=>{
     const json = JSON.stringify(STATE, null, 2);
-    const today = new Date().toISOString().slice(0,10);
+    const today = localToday();
     await saveViaDownloads(json, `gostatement-backup-${today}.json`);
   });
   const importDataFile = document.getElementById('importDataFile');
@@ -4031,8 +4088,9 @@ function wireMain(actor, effectiveOp){
             .finally(()=>{ btn.disabled = false; });
           return;
         }
-        const temp = tempPasswordFor(op.terminal, op.company+Date.now());
-        sha256Hex(temp).then(h=>{ op.passwordHash = h; op.tempPasswordPlain = temp; op.mustChange = true; persist(); showCredentialModal(op); });
+        const temp = tempPasswordFor(op.terminal, op.company);
+        const resetSalt = randomSaltHex();
+        hashPassword(temp, resetSalt).then(h=>{ op.passwordHash = h; op.passwordSalt = resetSalt; op.tempPasswordPlain = temp; op.mustChange = true; persist(); showCredentialModal(op); });
       }
     });
   });
@@ -5214,7 +5272,7 @@ async function openChargeStatementModal(actor, effectiveOp, existingStatement){
   if(!opsInTerminal.length){ toast('No operators found for this terminal.'); return; }
 
   function modalHtml(){
-    const today = new Date().toISOString().slice(0,10);
+    const today = localToday();
     const selectedOpId = existingStatement ? existingStatement.operator_id : (isOperator ? effectiveOp.id : opsInTerminal[0].id);
     const selectedType = existingStatement ? existingStatement.type : 'undersales';
     return `
@@ -6009,7 +6067,7 @@ window.addEventListener('resize', ()=>{
 (async function boot(){
   applyTheme(currentThemeMode());
   initPasswordToggle('loginPw');
-  await ensureSeed();
+  const seedResult = await ensureSeed();
   drawGateCanvas();
 
   // A self sign-up link (?claim=CODE) always wins — show that instead of the
@@ -6048,7 +6106,14 @@ window.addEventListener('resize', ()=>{
     enterApp();
     startCloudRealtime(()=>{ if(document.getElementById('app').classList.contains('active')) renderMain(); });
   }
-  else { showLogin(); }
+  else {
+    showLogin();
+    // First-ever visit in this browser with no cloud session to restore
+    // (offline/dev use, or config.js not filled in yet): ensureSeed() just
+    // generated a one-time random admin password instead of a known
+    // default — show it now, since this is the only place it's disclosed.
+    if(seedResult && seedResult.freshAdmin) showFreshAdminCredentialModal(seedResult.freshAdmin);
+  }
 })();
 
 </script>

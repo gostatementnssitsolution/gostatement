@@ -237,15 +237,15 @@
     <div style="flex:1;">
       <div class="nav-group">
         <div class="nav-label">Main</div>
-        <button class="nav-item active" onclick="navigateTo('dashboard')">📊 Dashboard</button>
-        <button class="nav-item" onclick="navigateTo('entries')">📝 Daily Entries</button>
-        <button class="nav-item" onclick="navigateTo('statements')">📄 Statements</button>
+        <button class="nav-item active" data-page="dashboard" onclick="navigateTo('dashboard')">📊 Dashboard</button>
+        <button class="nav-item" data-page="entries" disabled title="Not built yet in this redesign preview" aria-disabled="true">📝 Daily Entries <span style="opacity:.6;font-size:11px;">(soon)</span></button>
+        <button class="nav-item" data-page="statements" onclick="navigateTo('statements')">📄 Statements</button>
       </div>
       <div class="nav-group">
         <div class="nav-label">Admin</div>
-        <button class="nav-item" onclick="navigateTo('operators')">👥 Operators</button>
-        <button class="nav-item" onclick="navigateTo('admins')">🔐 Admins</button>
-        <button class="nav-item" onclick="navigateTo('import')">📥 Import</button>
+        <button class="nav-item" data-page="operators" onclick="navigateTo('operators')">👥 Operators</button>
+        <button class="nav-item" data-page="admins" disabled title="Not built yet in this redesign preview" aria-disabled="true">🔐 Admins <span style="opacity:.6;font-size:11px;">(soon)</span></button>
+        <button class="nav-item" data-page="import" disabled title="Not built yet in this redesign preview" aria-disabled="true">📥 Import <span style="opacity:.6;font-size:11px;">(soon)</span></button>
       </div>
     </div>
     <div id="sidebar-foot">
@@ -442,10 +442,11 @@ function showApp() {
 }
 
 function navigateTo(page) {
+  const target = document.getElementById(page + '-page');
+  if(!target) return; // page not built yet in this redesign preview
   document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
-  document.getElementById(page + '-page').classList.remove('hidden');
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  event.target.classList.add('active');
+  target.classList.remove('hidden');
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === page));
 }
 
 async function loadData() {
