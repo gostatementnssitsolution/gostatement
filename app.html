@@ -707,16 +707,26 @@ function fadeInMain(){
   void main.offsetWidth;
   main.classList.add('main-fade');
 }
-function animateKpis(){
+// Writes every KPI card's real figure. The count-up is decoration; the
+// value is not. Each render rebuilds #main from an HTML string in which
+// the KPI cards carry placeholder text ("0" / "RM 0.00"), so whenever this
+// is skipped the cards keep that placeholder — which is what left every
+// KPI reading RM 0.00 while the same page's chart, leaderboard and
+// subtitle showed the real figures. Pass animate=false to write the values
+// straight in, without replaying the count-up.
+function animateKpis(animate = true){
   document.querySelectorAll('.kpi .value[data-target]').forEach(node=>{
     const target = parseFloat(node.getAttribute('data-target'));
     const kind = node.getAttribute('data-fmt') || 'money';
     const fmt = kind === 'int' ? fmtInt : fmtMoney;
-    if(REDUCE_MOTION){ node.textContent = fmt(target); return; }
+    if(!animate || REDUCE_MOTION || !isFinite(target)){ node.textContent = fmt(target); return; }
     const start = performance.now();
     const dur = 560;
     function step(now){
-      const p = Math.min(1, (now-start)/dur);
+      // requestAnimationFrame reports the frame's start time, which can
+      // predate the performance.now() captured above — without the lower
+      // clamp the first frame renders a negative figure.
+      const p = Math.min(1, Math.max(0, (now-start)/dur));
       const eased = 1 - Math.pow(1-p, 3);
       node.textContent = fmt(target*eased);
       if(p<1) requestAnimationFrame(step);
@@ -3975,11 +3985,15 @@ function renderMain(){
   // slower laptop or connection. Only play them when the page you're
   // looking at has actually changed.
   const renderIdentity = VIEW.route + '|' + (effectiveOp ? effectiveOp.id : '') + '|' + (actor.type==='admin' ? 'admin' : 'operator');
-  if(renderIdentity !== __lastRenderIdentity){
+  const pageChanged = renderIdentity !== __lastRenderIdentity;
+  if(pageChanged){
     __lastRenderIdentity = renderIdentity;
     fadeInMain();
-    animateKpis();
   }
+  // Always write the figures — only the count-up is conditional. Skipping
+  // this entirely on a same-page re-render is what blanked every KPI back
+  // to its placeholder when data arrived on an already-open page.
+  animateKpis(pageChanged);
   wireMain(actor, effectiveOp);
 }
 let __lastRenderIdentity = null;
