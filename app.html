@@ -942,14 +942,41 @@ function buildUndersalesLedgerNow(terminal, company, asAt){
            lastDate: rows.length ? rows[rows.length-1][1] : null };
 }
 
-// Every operator's carry-forward position, biggest outstanding first.
-function undersalesSummary(terminals, asAt){
+// Narrows a ledger to a from/to window WITHOUT throwing away the history
+// that made the balance what it is. Everything before `from` is folded into
+// an opening balance, so the window still adds up:
+//
+//     opening + charged in window − deducted in window = closing
+//
+// Dropping the earlier days instead would show an operator who has owed
+// RM 984 since May as owing nothing, just because you looked at September.
+function undersalesPeriod(led, from){
+  if(!from){
+    return { from: null, opening: 0, events: led.events, items: led.items,
+             charged: led.charged, recovered: led.recovered, closing: led.outstanding };
+  }
+  let opening = 0;
+  for(const ev of led.events){ if(ev.date >= from) break; opening = ev.balance; }
+  const events = led.events.filter(ev => ev.date >= from);
+  const charged = round2(events.filter(e=>e.kind==='charge').reduce((s,e)=>s+e.amount, 0));
+  const recovered = round2(events.filter(e=>e.kind==='recovery').reduce((s,e)=>s+e.amount, 0));
+  return { from, opening: round2(opening), events,
+           items: led.items.filter(i => i.date >= from),
+           charged, recovered, closing: led.outstanding };
+}
+
+// Every operator's carry-forward position, biggest closing balance first.
+function undersalesSummary(terminals, from, to){
   const out = [];
   for(const op of STATE.operators){
     if(terminals && !terminals.includes(op.terminal)) continue;
-    const led = buildUndersalesLedger(op.terminal, op.company, asAt);
-    if(!led.charged && !led.recovered) continue; // never went negative, nothing to show
-    out.push({ op, led });
+    const led = buildUndersalesLedger(op.terminal, op.company, to);
+    const period = undersalesPeriod(led, from);
+    // Nothing ever carried forward AND nothing brought in from before the
+    // window — this operator has no carry-forward story to tell.
+    if(!led.charged && !led.recovered) continue;
+    if(from && !period.events.length && Math.abs(period.opening) <= CENT) continue;
+    out.push({ op, led, period });
   }
   out.sort((a,b)=> b.led.outstanding - a.led.outstanding);
   return out;
@@ -1327,10 +1354,11 @@ const VIEW = {
   chargeStatements: { terminal:'KT', typeFilter:'ALL', search:'', dateFrom:'', dateTo:'', expandedId:null },
   sendStatements: { terminal:'KT', dateFrom: localToday(), dateTo: localToday(), selected:{} },
   ledgerExpandedKey: null,
-  // Undersales carry-forward. `asAt` is a single "position as at this date"
-  // cut-off, not a from/to window: a carried balance is the sum of every
-  // earlier day, so slicing the start of it would be meaningless.
-  undersales: { search: '', asAt: '', expandedKey: null, onlyOutstanding: true },
+  // Undersales carry-forward. A carried balance is the sum of every earlier
+  // day, so a from/to window cannot simply drop what came before it: `from`
+  // folds everything earlier into an opening balance instead, the way a
+  // bank statement does, and `to` is the cut-off the balance is struck at.
+  undersales: { search: '', from: '', to: '', expandedKey: null, onlyOutstanding: true },
   selectedOperatorId: null, // which of MY_OPERATORS is active, for a multi-operator login
   adjSearchQuery: '',
   adjSearchType: 'ALL',
@@ -3230,13 +3258,26 @@ function operatorLedgerHtml(op){
 // did we take it back" without anybody opening the spreadsheet.
 function undersalesStatementHtml(led, opts){
   opts = opts || {};
-  if(!led.events.length){
-    return `<div class="empty">No negative net payout on record for this operator${led.lastDate ? ` up to ${fmtDate(led.lastDate)}` : ''} — nothing has been carried forward.</div>`;
+  const period = opts.period || undersalesPeriod(led, null);
+  if(!period.events.length && Math.abs(period.opening) <= CENT){
+    return `<div class="empty">${period.from
+      ? 'Nothing carried forward or deducted back in this period, and nothing was owed going into it.'
+      : `No negative net payout on record for this operator${led.lastDate ? ` up to ${fmtDate(led.lastDate)}` : ''} — nothing has been carried forward.`}</div>`;
   }
-  const rows = led.events.slice().reverse(); // newest first, like every other table here
+  const rows = period.events.slice().reverse(); // newest first, like every other table here
   // With a cut-off in force, say the date that was asked for; otherwise the
   // operator's own last movement, which is what the balance last changed on.
   const asAtLabel = led.asAt ? fmtDate(led.asAt) : (led.lastDate ? fmtDate(led.lastDate) : '—');
+  // The opening balance sits at the BOTTOM of the table because the rows
+  // read newest first — it is the line everything above it builds on.
+  const openingRow = period.from ? `
+          <tr style="background:var(--surface-2);">
+            <td>${fmtDate(period.from)}</td>
+            <td style="text-align:left;"><b>Balance brought forward</b> <span style="color:var(--ink-faint); font-size:11.5px;">still owed from before this period</span></td>
+            <td class="num" style="color:var(--ink-faint);">—</td>
+            <td class="num" style="color:var(--ink-faint);">—</td>
+            <td class="num" style="font-weight:700; color:${balanceColor(period.opening)};">${fmtBalance(period.opening)}</td>
+          </tr>` : '';
   return `
     <div class="scrollx">
       <table>
@@ -3289,19 +3330,20 @@ function undersalesStatementHtml(led, opts){
                 <td class="num" style="font-weight:700; color:${balanceColor(ev.balance)};">${fmtBalance(ev.balance)}</td>
               </tr>`;
           }).join('')}
+          ${openingRow}
         </tbody>
         <tfoot><tr>
-          <td colspan="2" style="text-align:left;">Position as at ${asAtLabel}</td>
-          <td class="num" style="color:var(--bad);">${fmtMoney(led.charged)}</td>
-          <td class="num" style="color:var(--good);">${fmtMoney(led.recovered)}</td>
-          <td class="num" style="color:${balanceColor(led.outstanding)};">${fmtBalance(led.outstanding)}</td>
+          <td colspan="2" style="text-align:left;">${period.from ? `This period${led.asAt ? `, to ${fmtDate(led.asAt)}` : ''}` : `Position as at ${asAtLabel}`}</td>
+          <td class="num" style="color:var(--bad);">${fmtMoney(period.charged)}</td>
+          <td class="num" style="color:var(--good);">${fmtMoney(period.recovered)}</td>
+          <td class="num" style="color:${balanceColor(period.closing)};">${fmtBalance(period.closing)}</td>
         </tr></tfoot>
       </table>
     </div>
     ${opts.footnote === false ? '' : `
     <div style="padding:12px 18px; font-size:11.5px; color:var(--ink-faint); border-top:1px solid var(--border); line-height:1.6;">
       Every figure here comes from the ledger itself — a day is carried forward when its recorded net payout is below zero, and deducted back when a later day carries an Undersales deduction.
-      Where one deduction could clear more than one outstanding day, the oldest is cleared first.
+      Where one deduction could clear more than one outstanding day, the oldest is cleared first.${period.from ? ` <b>Balance brought forward</b> is everything still owed before ${fmtDate(period.from)}, so the closing balance stays correct even though the earlier days are not listed.` : ''}
     </div>`}
   `;
 }
@@ -3322,42 +3364,64 @@ function undersalesOpenItemsHtml(led){
     </div>`;
 }
 
-function undersalesAsAtControlHtml(){
+function undersalesRangeControlHtml(){
+  const { from, to } = VIEW.undersales;
   return `
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-      <label style="font-size:12.5px; color:var(--ink-faint);">Position as at</label>
-      <input type="date" id="undersalesAsAt" value="${esc(VIEW.undersales.asAt)}" class="date-input">
-      <button class="btn btn-accent btn-sm" id="undersalesAsAtApply">Apply</button>
-      ${VIEW.undersales.asAt ? '<button class="btn btn-sm" id="undersalesAsAtClear">Clear</button>' : ''}
+      <input type="date" id="undersalesFrom" value="${esc(from)}" class="date-input" title="From">
+      <span style="color:var(--ink-faint); font-size:13px;">to</span>
+      <input type="date" id="undersalesTo" value="${esc(to)}" class="date-input" title="To">
+      <button class="btn btn-accent btn-sm" id="undersalesApply">Apply</button>
+      ${(from || to) ? '<button class="btn btn-sm" id="undersalesClear">Clear</button>' : ''}
     </div>`;
 }
 
+// The first KPI card doubles up: without a date range it reports the
+// lifetime total carried forward, and with one it reports what was already
+// owed going into the period — the number the rest of the window builds on.
+function undersalesOpeningKpiHtml(period, lifetimeCharged){
+  if(!period.from){
+    return `<div class="eyebrow">Carried forward (total)</div><div class="value num" style="color:var(--bad);" data-target="${lifetimeCharged}" data-fmt="money">RM 0.00</div>`;
+  }
+  return period.opening < -CENT
+    ? `<div class="eyebrow">Credit brought forward</div><div class="value num" style="color:var(--good);" data-target="${-period.opening}" data-fmt="money">RM 0.00</div>`
+    : `<div class="eyebrow">Balance brought forward</div><div class="value num" data-target="${period.opening}" data-fmt="money">RM 0.00</div>`;
+}
+function undersalesClosingKpiHtml(closing){
+  return closing < -CENT
+    ? `<div class="eyebrow">Credit in hand</div><div class="value num" style="color:var(--good);" data-target="${-closing}" data-fmt="money">RM 0.00</div>`
+    : `<div class="eyebrow">Balance still owed</div><div class="value num" data-target="${closing}" data-fmt="money">RM 0.00</div>`;
+}
+function undersalesPeriodLabel(period, led){
+  if(!period.from) return led.asAt ? `up to ${fmtDate(led.asAt)}` : 'all records';
+  return `${fmtDate(period.from)} &ndash; ${fmtDate(led.asAt || led.lastDate || period.from)}`;
+}
+
 function operatorUndersalesHtml(op){
-  const asAt = VIEW.undersales.asAt || null;
-  const led = buildUndersalesLedger(op.terminal, op.company, asAt);
+  const { from, to } = VIEW.undersales;
+  const led = buildUndersalesLedger(op.terminal, op.company, to || null);
+  const period = undersalesPeriod(led, from || null);
   return `
     <div id="topbar">
       <div>
         <h1>Undersales Carry-Forward</h1>
-        <div class="desc">${esc(op.company)} &middot; <span class="pill pill-${op.terminal.toLowerCase()}">${TERMINALS[op.terminal].name}</span> &middot; every day your payout went negative, and when it was deducted back</div>
+        <div class="desc">${esc(op.company)} &middot; <span class="pill pill-${op.terminal.toLowerCase()}">${TERMINALS[op.terminal].name}</span> &middot; every day your payout went negative, and when it was deducted back &middot; ${undersalesPeriodLabel(period, led)}</div>
       </div>
       <div class="topbar-actions">
-        ${undersalesAsAtControlHtml()}
+        ${undersalesRangeControlHtml()}
         <button class="btn btn-sm" id="btn-undersales-csv">Download CSV</button>
       </div>
     </div>
 
     <div class="kpi-grid">
-      <div class="card kpi"><div class="eyebrow">Carried forward (total)</div><div class="value num" style="color:var(--bad);" data-target="${led.charged}" data-fmt="money">RM 0.00</div></div>
-      <div class="card kpi"><div class="eyebrow">Deducted back (total)</div><div class="value num" style="color:var(--good);" data-target="${led.recovered}" data-fmt="money">RM 0.00</div></div>
-      <div class="card kpi" style="border-color:${led.outstanding > CENT ? 'var(--bad)' : 'var(--border)'};">${led.outstanding < -CENT
-        ? `<div class="eyebrow">Credit in hand</div><div class="value num" style="color:var(--good);" data-target="${-led.outstanding}" data-fmt="money">RM 0.00</div>`
-        : `<div class="eyebrow">Balance still owed</div><div class="value num" data-target="${led.outstanding}" data-fmt="money">RM 0.00</div>`}</div>
-      <div class="card kpi"><div class="eyebrow">Oldest still owed</div><div class="value" style="font-size:20px;">${led.oldestOpen ? `${fmtDate(led.oldestOpen)}<span style="font-size:13px; color:var(--ink-faint); display:block; margin-top:2px;">${daysSince(led.oldestOpen, led.asOf)} day(s) ago</span>` : '<span style="color:var(--good);">Nothing owed</span>'}</div></div>
+      <div class="card kpi">${undersalesOpeningKpiHtml(period, led.charged)}</div>
+      <div class="card kpi"><div class="eyebrow">Carried forward${period.from ? '' : ' (total)'}</div><div class="value num" style="color:var(--bad);" data-target="${period.charged}" data-fmt="money">RM 0.00</div></div>
+      <div class="card kpi"><div class="eyebrow">Deducted back${period.from ? '' : ' (total)'}</div><div class="value num" style="color:var(--good);" data-target="${period.recovered}" data-fmt="money">RM 0.00</div></div>
+      <div class="card kpi" style="border-color:${period.closing > CENT ? 'var(--bad)' : 'var(--border)'};">${undersalesClosingKpiHtml(period.closing)}</div>
     </div>
 
     <div class="card table-card">
-      ${undersalesStatementHtml(led)}
+      ${undersalesStatementHtml(led, { period })}
     </div>
     <div style="padding:0 2px;">${undersalesOpenItemsHtml(led)}</div>
   `;
@@ -3365,38 +3429,42 @@ function operatorUndersalesHtml(op){
 
 function adminUndersalesHtml(){
   const terms = terminalsInScope();
-  const asAt = VIEW.undersales.asAt || null;
-  let list = undersalesSummary(terms, asAt);
+  const { from, to } = VIEW.undersales;
+  let list = undersalesSummary(terms, from || null, to || null);
   if(VIEW.undersales.search){
     const q = VIEW.undersales.search.toLowerCase();
     list = list.filter(x => x.op.company.toLowerCase().includes(q));
   }
   const shown = VIEW.undersales.onlyOutstanding ? list.filter(x => x.led.outstanding > CENT) : list;
-  const totalCharged = round2(list.reduce((s,x)=>s+x.led.charged, 0));
-  const totalRecovered = round2(list.reduce((s,x)=>s+x.led.recovered, 0));
-  const totalOutstanding = round2(list.reduce((s,x)=>s+x.led.outstanding, 0));
-  const owing = list.filter(x=>x.led.outstanding > CENT).length;
+  const sum = (rows, pick) => round2(rows.reduce((s,x)=>s+pick(x), 0));
+  const totalOpening = sum(list, x=>x.period.opening);
+  const totalCharged = sum(list, x=>x.period.charged);
+  const totalRecovered = sum(list, x=>x.period.recovered);
+  const totalOutstanding = sum(list, x=>x.led.outstanding);
+  const headerPeriod = from
+    ? `${fmtDate(from)} &ndash; ${to ? fmtDate(to) : 'latest'}`
+    : (to ? `up to ${fmtDate(to)}` : 'all records');
 
   return `
     <div id="topbar">
       <div>
         <h1>Undersales Carry-Forward</h1>
-        <div class="desc">Which operators went negative, on what date, and when each shortfall was deducted back</div>
+        <div class="desc">Which operators went negative, on what date, and when each shortfall was deducted back &middot; ${headerPeriod}</div>
       </div>
       <div class="topbar-actions">
         ${terminalSelectHtml()}
-        ${undersalesAsAtControlHtml()}
+        ${undersalesRangeControlHtml()}
         <button class="btn btn-sm" id="btn-undersales-csv">Download CSV</button>
       </div>
     </div>
 
     <div class="kpi-grid">
-      <div class="card kpi"><div class="eyebrow">Carried forward (total)</div><div class="value num" style="color:var(--bad);" data-target="${totalCharged}" data-fmt="money">RM 0.00</div></div>
-      <div class="card kpi"><div class="eyebrow">Deducted back (total)</div><div class="value num" style="color:var(--good);" data-target="${totalRecovered}" data-fmt="money">RM 0.00</div></div>
-      <div class="card kpi" style="border-color:${totalOutstanding > CENT ? 'var(--bad)' : 'var(--border)'};">${totalOutstanding < -CENT
-        ? `<div class="eyebrow">Credit in hand</div><div class="value num" style="color:var(--good);" data-target="${-totalOutstanding}" data-fmt="money">RM 0.00</div>`
-        : `<div class="eyebrow">Balance still owed</div><div class="value num" data-target="${totalOutstanding}" data-fmt="money">RM 0.00</div>`}</div>
-      <div class="card kpi"><div class="eyebrow">Operators still owing</div><div class="value num" data-target="${owing}" data-fmt="int">0</div></div>
+      ${from
+        ? `<div class="card kpi">${undersalesOpeningKpiHtml({from, opening: totalOpening}, totalCharged)}</div>`
+        : `<div class="card kpi"><div class="eyebrow">Operators still owing</div><div class="value num" data-target="${list.filter(x=>x.led.outstanding > CENT).length}" data-fmt="int">0</div></div>`}
+      <div class="card kpi"><div class="eyebrow">Carried forward${from ? '' : ' (total)'}</div><div class="value num" style="color:var(--bad);" data-target="${totalCharged}" data-fmt="money">RM 0.00</div></div>
+      <div class="card kpi"><div class="eyebrow">Deducted back${from ? '' : ' (total)'}</div><div class="value num" style="color:var(--good);" data-target="${totalRecovered}" data-fmt="money">RM 0.00</div></div>
+      <div class="card kpi" style="border-color:${totalOutstanding > CENT ? 'var(--bad)' : 'var(--border)'};">${undersalesClosingKpiHtml(totalOutstanding)}</div>
     </div>
 
     <div class="card table-card">
@@ -3413,31 +3481,33 @@ function adminUndersalesHtml(){
             <th style="text-align:left;">Operator</th>
             <th>Terminal</th>
             <th>Neg. days</th>
+            ${from ? '<th>Brought fwd</th>' : ''}
             <th>Carried fwd</th>
             <th>Deducted back</th>
             <th>Still owed</th>
             <th>Oldest</th>
           </tr></thead>
           <tbody>
-            ${shown.map(({op, led})=>{
+            ${shown.map(({op, led, period})=>{
               const key = op.terminal+'|'+op.company;
               const expanded = VIEW.undersales.expandedKey === key;
               return `
               <tr class="row-${op.terminal.toLowerCase()}" data-undersales-key="${esc(key)}" style="cursor:pointer;">
                 <td style="text-align:left;">${esc(op.company)}</td>
                 <td><span class="pill pill-${op.terminal.toLowerCase()}">${esc(op.terminal)}</span></td>
-                <td class="num">${fmtInt(led.items.length)}</td>
-                <td class="num" style="color:var(--bad);">${fmtMoney(led.charged)}</td>
-                <td class="num" style="color:var(--good);">${fmtMoney(led.recovered)}</td>
+                <td class="num">${fmtInt(period.items.length)}</td>
+                ${from ? `<td class="num" style="color:${balanceColor(period.opening)};">${fmtBalance(period.opening)}</td>` : ''}
+                <td class="num" style="color:var(--bad);">${fmtMoney(period.charged)}</td>
+                <td class="num" style="color:var(--good);">${fmtMoney(period.recovered)}</td>
                 <td class="num" style="font-weight:700; color:${balanceColor(led.outstanding)};">${fmtBalance(led.outstanding)}</td>
                 <td>${led.oldestOpen ? `${fmtDate(led.oldestOpen)} <span style="color:var(--ink-faint); font-size:11.5px;">(${daysSince(led.oldestOpen, led.asOf)}d)</span>` : '<span class="pill pill-good">Clear</span>'}</td>
               </tr>
-              ${expanded ? `<tr><td colspan="7" style="background:var(--surface-2); padding:0; cursor:default;"><div style="padding:18px;">
+              ${expanded ? `<tr><td colspan="${from ? 8 : 7}" style="background:var(--surface-2); padding:0; cursor:default;"><div style="padding:18px;">
                 <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; align-items:center;">
                   <b>${esc(op.company)}</b>
                   <span class="pill pill-${op.terminal.toLowerCase()}">${TERMINALS[op.terminal].name}</span>
                 </div>
-                ${undersalesStatementHtml(led, {footnote:false})}
+                ${undersalesStatementHtml(led, {footnote:false, period})}
                 ${undersalesOpenItemsHtml(led)}
                 <div style="display:flex; justify-content:flex-end; margin-top:14px;"><button class="btn btn-sm" id="undersalesDetailClose">Close</button></div>
               </div></td></tr>` : ''}`;
@@ -3445,16 +3515,17 @@ function adminUndersalesHtml(){
           </tbody>
           <tfoot><tr>
             <td colspan="3" style="text-align:left;">Total</td>
-            <td class="num" style="color:var(--bad);">${fmtMoney(round2(shown.reduce((s,x)=>s+x.led.charged,0)))}</td>
-            <td class="num" style="color:var(--good);">${fmtMoney(round2(shown.reduce((s,x)=>s+x.led.recovered,0)))}</td>
-            <td class="num">${fmtBalance(round2(shown.reduce((s,x)=>s+x.led.outstanding,0)))}</td>
+            ${from ? `<td class="num">${fmtBalance(sum(shown, x=>x.period.opening))}</td>` : ''}
+            <td class="num" style="color:var(--bad);">${fmtMoney(sum(shown, x=>x.period.charged))}</td>
+            <td class="num" style="color:var(--good);">${fmtMoney(sum(shown, x=>x.period.recovered))}</td>
+            <td class="num">${fmtBalance(sum(shown, x=>x.led.outstanding))}</td>
             <td></td>
           </tr></tfoot>
         </table>
       </div>
       ${!shown.length ? `<div class="empty">${VIEW.undersales.onlyOutstanding ? 'No operator is currently carrying an undersales balance.' : 'No operator has a negative net payout on record.'}</div>` : ''}
       <div style="padding:12px 18px; font-size:11.5px; color:var(--ink-faint); border-top:1px solid var(--border); line-height:1.6;">
-        Click any operator to open their running statement. Balances are always computed from that operator's first record — a carried balance is the sum of every earlier day, so it cannot be sliced by a date range. Use <b>Position as at</b> to see where things stood on a particular day.
+        Click any operator to open their running statement. <b>Still owed</b> is always the real balance, computed from that operator's first record — a carried balance is the sum of every earlier day, so picking a date range never hides what came before it: ${from ? 'everything owed before ' + fmtDate(from) + ' is shown as <b>Brought fwd</b>' : 'set a range and everything owed before it appears as <b>Brought fwd</b>'}.
       </div>
     </div>
   `;
@@ -4380,8 +4451,15 @@ function undersalesToCsv(list){
     const s = String(v == null ? '' : v);
     return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
-  for(const {op, led} of list){
-    for(const ev of led.events){
+  for(const {op, led, period} of list){
+    const win = period || undersalesPeriod(led, null);
+    // The opening balance leads each operator's block, so the CSV's own
+    // arithmetic closes without the reader needing the earlier days.
+    if(win.from){
+      lines.push([op.company, op.terminal, win.from, 'Balance brought forward', '', '', win.opening.toFixed(2),
+                  'Still owed from before ' + win.from].map(cell).join(','));
+    }
+    for(const ev of win.events){
       if(ev.kind === 'charge'){
         const it = ev.item;
         const detail = (it.settledOn && it.remaining <= CENT)
@@ -4659,12 +4737,26 @@ function wireMain(actor, effectiveOp){
   });
 
   /* ---------------- undersales carry-forward ---------------- */
-  const usAsAt = document.getElementById('undersalesAsAt');
-  const usAsAtApply = document.getElementById('undersalesAsAtApply');
-  if(usAsAtApply) usAsAtApply.addEventListener('click', ()=>{ VIEW.undersales.asAt = usAsAt ? usAsAt.value : ''; renderMain(); });
-  if(usAsAt) usAsAt.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); VIEW.undersales.asAt = usAsAt.value; renderMain(); }});
-  const usAsAtClear = document.getElementById('undersalesAsAtClear');
-  if(usAsAtClear) usAsAtClear.addEventListener('click', ()=>{ VIEW.undersales.asAt = ''; renderMain(); });
+  const usFrom = document.getElementById('undersalesFrom');
+  const usTo = document.getElementById('undersalesTo');
+  // Both dates commit together on Apply (or Enter), so the window is never
+  // re-filtered against a half-entered range.
+  const usApplyRange = ()=>{
+    let a = usFrom ? usFrom.value : '', b = usTo ? usTo.value : '';
+    if(a && b && a > b){ const t = a; a = b; b = t; } // tolerate a backwards range
+    VIEW.undersales.from = a; VIEW.undersales.to = b;
+    VIEW.undersales.expandedKey = null;
+    renderMain();
+  };
+  const usApply = document.getElementById('undersalesApply');
+  if(usApply) usApply.addEventListener('click', usApplyRange);
+  for(const el of [usFrom, usTo]){
+    if(el) el.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); usApplyRange(); }});
+  }
+  const usClear = document.getElementById('undersalesClear');
+  if(usClear) usClear.addEventListener('click', ()=>{
+    VIEW.undersales.from = ''; VIEW.undersales.to = ''; VIEW.undersales.expandedKey = null; renderMain();
+  });
   const usSearch = document.getElementById('undersalesSearch');
   if(usSearch) usSearch.addEventListener('input', ()=>{
     VIEW.undersales.search = usSearch.value;
@@ -4683,16 +4775,18 @@ function wireMain(actor, effectiveOp){
   if(usClose) usClose.addEventListener('click', (e)=>{ e.stopPropagation(); VIEW.undersales.expandedKey = null; renderMain(); });
   const usCsv = document.getElementById('btn-undersales-csv');
   if(usCsv) usCsv.addEventListener('click', ()=>{
-    const asAt = VIEW.undersales.asAt || null;
+    const from = VIEW.undersales.from || null, to = VIEW.undersales.to || null;
+    const suffix = from || to ? `-${from || 'start'}_${to || 'latest'}` : '';
     if(isOperatorView){
-      const led = buildUndersalesLedger(effectiveOp.terminal, effectiveOp.company, asAt);
-      saveViaDownloads(undersalesToCsv([{op: effectiveOp, led}]), `undersales-carry-forward-${effectiveOp.company}.csv`);
+      const led = buildUndersalesLedger(effectiveOp.terminal, effectiveOp.company, to);
+      const period = undersalesPeriod(led, from);
+      saveViaDownloads(undersalesToCsv([{op: effectiveOp, led, period}]), `undersales-carry-forward-${effectiveOp.company}${suffix}.csv`);
     } else {
       const terms = terminalsInScope();
-      let list = undersalesSummary(terms, asAt);
+      let list = undersalesSummary(terms, from, to);
       if(VIEW.undersales.search){ const q = VIEW.undersales.search.toLowerCase(); list = list.filter(x=>x.op.company.toLowerCase().includes(q)); }
       if(VIEW.undersales.onlyOutstanding) list = list.filter(x=>x.led.outstanding > CENT);
-      saveViaDownloads(undersalesToCsv(list), `undersales-carry-forward-${terms.join('-')}.csv`);
+      saveViaDownloads(undersalesToCsv(list), `undersales-carry-forward-${terms.join('-')}${suffix}.csv`);
     }
   });
 
