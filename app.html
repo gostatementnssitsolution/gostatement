@@ -1513,10 +1513,23 @@ function extractRecordsFromSheetRows(rowsMap){
         else if(ll.includes('manual')) manualCharge += v;
         else stdCharge += v;
       }
-      const final = finalCol != null ? (Number(cells[finalCol]) || 0) : (sales+stdCharge+manualCharge+undersales);
+      // A blank or non-numeric Final cell is a MISSING figure, not a payout of
+      // zero. `Number(cells[finalCol]) || 0` used to turn one into the other,
+      // and 623 rows were imported recording that an operator was paid nothing
+      // on a day they had made thousands in sales. Fall back to the sum of the
+      // parts instead, which is what the Final column holds on every row the
+      // sheet does fill in.
+      const expected = sales + stdCharge + manualCharge + undersales;
+      const rawFinal = finalCol != null ? Number(cells[finalCol]) : NaN;
+      const final = isFinite(rawFinal) ? rawFinal : expected;
       const email = emailCol != null ? cells[emailCol] : null;
       records.push({
         company: company.trim(), date, sales, stdCharge, manualCharge, undersales, final, items,
+        // Flagged, not corrected: when the sheet's own Final disagrees with its
+        // components the columns have almost certainly come in misaligned, and
+        // only the person holding the spreadsheet can say which figure is right.
+        mismatch: Math.abs(final - expected) > 0.005,
+        expected,
         email: (typeof email === 'string' ? email.trim() : null)
       });
     }
@@ -3985,7 +3998,21 @@ function importPreviewHtml(){
   const companies = Array.from(new Set(p.records.map(r=>r.company)));
   const existingCompanies = new Set(STATE.operators.filter(o=>o.terminal===terminal).map(o=>o.company));
   const newCompanies = companies.filter(c=>!existingCompanies.has(c));
-  const preview = p.records.slice(0, 30);
+  // Show the rows that do not add up first — they are the whole reason this
+  // banner exists, and burying them on page 12 of the preview is how a
+  // misaligned sheet gets imported unnoticed.
+  const bad = p.records.filter(r=>r.mismatch);
+  const preview = bad.concat(p.records.filter(r=>!r.mismatch)).slice(0, 30);
+  const warning = bad.length ? `
+      <div style="border:1px solid var(--bad); border-radius:8px; background:var(--bad-soft); padding:12px 14px; margin-bottom:14px;">
+        <div style="font-weight:700; font-size:13.5px; color:var(--bad); margin-bottom:4px;">
+          ${fmtInt(bad.length)} of ${fmtInt(p.records.length)} row(s) do not add up
+        </div>
+        <div style="font-size:12.5px; color:var(--ink-soft); line-height:1.6;">
+          On these rows the sheet's <b>Final</b> column does not equal sales + charges + undersales, which usually means the columns have come in misaligned — the wrong column read as Final, or a charge landing in the wrong field.
+          They are listed first below, with the figure the components imply. Check them against the spreadsheet before importing: nothing here is corrected automatically, because only the sheet can say which figure is right.
+        </div>
+      </div>` : '';
 
   return `
     <div style="border:1px solid var(--border); border-radius:10px; padding:16px; background:var(--surface-2);">
@@ -4009,23 +4036,26 @@ function importPreviewHtml(){
         </div>
       </div>
       ${newCompanies.length ? `<div style="margin-bottom:12px; font-size:12.5px;"><span class="pill pill-accent">New</span> ${newCompanies.map(esc).join(', ')}</div>` : ''}
+      ${warning}
       <div class="scrollx" style="max-height:260px; overflow-y:auto; border:1px solid var(--border); border-radius:8px;">
         <table>
-          <thead><tr><th>Date</th><th style="text-align:left;">Operator</th><th>Sales</th><th>Charges</th><th>Net Payout</th></tr></thead>
+          <thead><tr><th>Date</th><th style="text-align:left;">Operator</th><th>Sales</th><th>Charges</th><th>Undersales</th><th>Net Payout</th></tr></thead>
           <tbody>
-            ${preview.map(r=>`<tr>
-              <td>${fmtDate(r.date)}</td>
+            ${preview.map(r=>`<tr${r.mismatch ? ' style="background:var(--bad-soft);"' : ''}>
+              <td>${r.mismatch ? '⚠️ ' : ''}${fmtDate(r.date)}</td>
               <td style="text-align:left;">${esc(r.company)}</td>
               <td class="num">${fmtMoney(r.sales)}</td>
               <td class="num" style="color:var(--bad);">${fmtMoney(r.stdCharge+r.manualCharge)}</td>
-              <td class="num" style="font-weight:700;">${fmtMoney(r.final)}</td>
+              <td class="num">${fmtMoney(r.undersales)}</td>
+              <td class="num" style="font-weight:700;${r.mismatch ? ' color:var(--bad);' : ''}">${fmtMoney(r.final)}${
+                r.mismatch ? `<div style="font-size:10.5px; font-weight:600; color:var(--ink-faint); white-space:nowrap;">parts imply ${fmtMoney(r.expected)}</div>` : ''}</td>
             </tr>`).join('')}
           </tbody>
         </table>
       </div>
       ${p.records.length>30 ? `<div style="font-size:12px; color:var(--ink-faint); margin-top:8px;">…and ${p.records.length-30} more row(s), all will be imported.</div>` : ''}
       <div class="modal-actions" style="justify-content:flex-start; margin-top:16px;">
-        <button class="btn btn-primary" id="btnConfirmImport">Import ${p.records.length} row(s)</button>
+        <button class="btn ${bad.length ? 'btn-danger' : 'btn-primary'}" id="btnConfirmImport">Import ${p.records.length} row(s)${bad.length ? ` — including ${fmtInt(bad.length)} that do not add up` : ''}</button>
         <button class="btn" id="btnCancelImport">Cancel</button>
       </div>
     </div>
