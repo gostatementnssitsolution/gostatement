@@ -405,8 +405,10 @@
       .order("period_to", { ascending: false });
     if (filters.terminalId) q = q.eq("terminal_id", filters.terminalId);
     if (filters.operatorId) q = q.eq("operator_id", filters.operatorId);
-    if (filters.periodFrom) q = q.eq("period_from", filters.periodFrom);
-    if (filters.periodTo) q = q.eq("period_to", filters.periodTo);
+    // Month view: any invoice whose period starts inside the month, so a
+    // manually keyed-in partial range (e.g. 05–20 Sep) still shows up.
+    if (filters.periodFrom) q = q.gte("period_from", filters.periodFrom);
+    if (filters.periodTo) q = q.lte("period_from", filters.periodTo);
     const { data, error } = await q;
     if (error) throw error;
     return data;

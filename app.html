@@ -1584,6 +1584,43 @@ function excelTimeFractionToLabel(v){
   }
   return String(v).trim();
 }
+const MONTH_ABBR = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+// Real trip date from a cell: an Excel serial (anything before 1960 is
+// rejected — that is a row number, not a date) or a typed dd/mm/yyyy,
+// yyyy-mm-dd or "1 Sep 2026" string. Returns ISO yyyy-mm-dd or null.
+function parseTripDateCell(v){
+  if(v == null || v === '') return null;
+  const ok = (y,m,d) => {
+    if(y < 100) y += 2000;
+    const dt = new Date(Date.UTC(y, m-1, d));
+    if(y < 1960 || y > 2100 || dt.getUTCMonth() !== m-1 || dt.getUTCDate() !== d) return null;
+    return dt.toISOString().slice(0,10);
+  };
+  if(typeof v === 'number'){
+    if(v < 21916 || v > 73051) return null; // 1960-01-01 .. 2100-01-01
+    return excelSerialToIso(Math.floor(v));
+  }
+  const t = String(v).trim();
+  let m;
+  if((m = t.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/))) return ok(+m[1], +m[2], +m[3]);
+  if((m = t.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})$/))) return ok(+m[3], +m[2], +m[1]);
+  if((m = t.match(/^(\d{1,2})[\s-]+([a-z]{3})[a-z]*[\s-]+(\d{2,4})$/i))){
+    const mi = MONTH_ABBR.indexOf(m[2].toLowerCase());
+    if(mi >= 0) return ok(+m[3], mi+1, +m[1]);
+  }
+  return null;
+}
+// "MANUAL TRIP SEPT 26" / "September 2026" -> "2026-09"
+function periodFromTitle(text){
+  const m = String(text).match(/\b(jan|feb|mac|mar|apr|may|mei|jun|jul|julai|aug|ogos|sep|oct|okt|nov|dec|dis)[a-z]*\.?\s*[-']?\s*(\d{4}|\d{2})\b/i);
+  if(!m) return null;
+  const alias = { mac:'mar', mei:'may', julai:'jul', ogos:'aug', okt:'oct', dis:'dec' };
+  const key = m[1].toLowerCase();
+  const mi = MONTH_ABBR.indexOf(alias[key] || key.slice(0,3));
+  if(mi < 0) return null;
+  let y = +m[2]; if(y < 100) y += 2000;
+  return `${y}-${String(mi+1).padStart(2,'0')}`;
+}
 async function parseManualTripWorkbook(arrayBuffer){
   const zip = await unzip(arrayBuffer);
   const sharedStringsXml = zip.files['xl/sharedStrings.xml'] ? new TextDecoder().decode(await zip.readFile('xl/sharedStrings.xml')) : null;
@@ -1634,21 +1671,42 @@ async function parseManualTripWorkbook(arrayBuffer){
     }
     return null;
   };
-  const cNo = colOf('no'), cDate = colOf('date'), cEnter = colOf('enter time'), cExit = colOf('exit time'),
+  const dataRows = rowIndices.filter(ri => ri > headerRowIdx);
+  // Sheets often carry more than one "Date" header (e.g. the running-number
+  // column is mislabelled "Date"). Pick the date-ish column whose cells
+  // actually parse as real dates, instead of the first one by position —
+  // otherwise the row numbers 1, 2, 3… become 1 Jan 1900.
+  const dateCols = Object.entries(headerCells)
+    .filter(([,v]) => typeof v === 'string' && /^(date|tarikh|trip date)$/i.test(v.trim()))
+    .map(([c]) => Number(c));
+  let cDate = null, bestHits = 0;
+  for(const c of dateCols){
+    const hits = dataRows.filter(ri => parseTripDateCell(rowsMap[ri][c])).length;
+    if(hits > bestHits){ bestHits = hits; cDate = c; }
+  }
+  let cNo = colOf('no');
+  if(cNo === null){
+    // A spare "Date" column holding small integers is really the NO column.
+    cNo = dateCols.find(c => c !== cDate && dataRows.some(ri => typeof rowsMap[ri][c] === 'number' && rowsMap[ri][c] < 10000)) ?? null;
+  }
+  const cEnter = colOf('enter time'), cExit = colOf('exit time'),
         cOp = colOf('operator name'), cPlate = colOf('plate no'), cDest = colOf('destination');
   if(cOp === null || cDest === null) throw new Error('Could not map the "Operator Name" / "Destination" columns in this sheet.');
 
   const groups = {}; // operatorName (as typed in the sheet) -> trips[]
-  for(const ri of rowIndices){
-    if(ri <= headerRowIdx) continue;
+  let missingDates = 0;
+  for(const ri of dataRows){
     const cells = rowsMap[ri];
     const opName = cells[cOp];
     if(!opName || typeof opName !== 'string') continue;
-    const dateRaw = cells[cDate];
-    if(typeof dateRaw !== 'number') continue; // skip rows without a real date (blank separators etc.)
+    const dateIso = cDate !== null ? parseTripDateCell(cells[cDate]) : null;
+    // With a usable date column, rows without a date are separators/totals.
+    // Without one, keep every row — the admin keys in the period manually.
+    if(cDate !== null && !dateIso) continue;
+    if(!dateIso) missingDates++;
     const trip = {
-      no: cNo!=null && cells[cNo]!=null ? Number(cells[cNo]) : null,
-      dateIso: excelSerialToIso(dateRaw),
+      no: cNo!=null && cells[cNo]!=null && !isNaN(Number(cells[cNo])) ? Number(cells[cNo]) : null,
+      dateIso,
       enter: excelTimeFractionToLabel(cells[cEnter]),
       exit: excelTimeFractionToLabel(cells[cExit]),
       plate: cPlate!=null && cells[cPlate]!=null ? String(cells[cPlate]).trim() : '',
@@ -1659,16 +1717,27 @@ async function parseManualTripWorkbook(arrayBuffer){
     groups[key].push(trip);
   }
   // Auto-detect the reporting month/period straight from the trip dates
-  // themselves (most common YYYY-MM among all rows) rather than requiring
-  // the admin to pick a month first — matches whatever the sheet was for.
+  // themselves (most common YYYY-MM among all rows); fall back to the sheet
+  // title (e.g. "MANUAL TRIP SEPT 26"). The admin can still override it.
   const monthCounts = {};
   Object.values(groups).forEach(trips => trips.forEach(t=>{
+    if(!t.dateIso) return;
     const ym = t.dateIso.slice(0,7);
     monthCounts[ym] = (monthCounts[ym]||0)+1;
   }));
   const ranked = Object.entries(monthCounts).sort((a,b)=>b[1]-a[1]);
-  const detectedPeriod = ranked.length ? ranked[0][0] : null;
-  return { terminal: terminalGuess, groups, detectedPeriod };
+  let detectedPeriod = ranked.length ? ranked[0][0] : null;
+  let periodSource = detectedPeriod ? 'trip dates' : null;
+  if(!detectedPeriod){
+    for(const ri of rowIndices.slice(0, headerRowIdx)){
+      for(const v of Object.values(rowsMap[ri])){
+        const ym = typeof v === 'string' ? periodFromTitle(v) : null;
+        if(ym){ detectedPeriod = ym; periodSource = 'sheet title'; break; }
+      }
+      if(detectedPeriod) break;
+    }
+  }
+  return { terminal: terminalGuess, groups, detectedPeriod, periodSource, missingDates };
 }
 // Best-effort match of a trip-list "Operator Name" (a different naming
 // convention than our operator directory) to an existing operator company.
@@ -5260,12 +5329,30 @@ function manualImportPreviewHtml(){
   if(!MANUAL_IMPORT_PREVIEW) return '';
   const p = MANUAL_IMPORT_PREVIEW;
   const opsInTerminal = STATE.operators.filter(o=>o.terminal===VIEW.manualInvoice.terminal && o.active!==false);
+  const allTrips = p.groups.flatMap(g=>g.trips);
+  const dated = allTrips.filter(t=>t.dateIso);
+  const outside = p.periodFrom && p.periodTo ? dated.filter(t=>t.dateIso<p.periodFrom || t.dateIso>p.periodTo).length : 0;
+  const missing = allTrips.length - dated.length;
+  const sourceNote = p.periodEdited ? 'keyed in manually'
+    : p.periodSource ? `auto-detected from ${p.periodSource}`
+    : 'could not detect — please key in the period';
   return `
     <div class="card" style="margin-bottom:14px; padding:14px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-        <div><b>Import preview</b> — ${p.groups.length} operator group(s) found${p.terminalGuess?` · terminal: ${p.terminalGuess}`:''}${p.detectedPeriod?` · period: ${fmtDate(monthRange(p.detectedPeriod).from)} – ${fmtDate(monthRange(p.detectedPeriod).to)}`:''}</div>
+        <div><b>Import preview</b> — ${p.groups.length} operator group(s) found${p.terminalGuess?` · terminal: ${p.terminalGuess}`:''}</div>
         <button class="btn btn-sm" id="btn-mi-cancel-import">Cancel</button>
       </div>
+      <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:10px;">
+        <b>Invoice period</b>
+        <input type="month" id="miImpMonth" class="btn btn-sm" value="${p.periodFrom?p.periodFrom.slice(0,7):''}" title="Pick a whole month">
+        <span style="color:var(--ink-faint);">or</span>
+        <input type="date" id="miImpFrom" class="btn btn-sm" value="${p.periodFrom||''}">
+        <span>–</span>
+        <input type="date" id="miImpTo" class="btn btn-sm" value="${p.periodTo||''}">
+        <span style="color:${p.periodSource||p.periodEdited?'var(--ink-faint)':'var(--bad)'}; font-size:12.5px;">(${sourceNote})</span>
+      </div>
+      ${outside ? `<div style="color:var(--bad); font-size:12.5px; margin-bottom:8px;">⚠ ${outside} trip(s) have a date outside this period — check the period is correct.</div>` : ''}
+      ${missing ? `<div style="color:var(--bad); font-size:12.5px; margin-bottom:8px;">⚠ ${missing} trip(s) have no readable date — they will be dated ${p.periodFrom?fmtDate(p.periodFrom):'the period start'}.</div>` : ''}
       <div class="scrollx">
         <table>
           <thead><tr><th style="text-align:left;">Sheet operator name</th><th>Trips</th><th style="text-align:left;">Match to operator</th></tr></thead>
@@ -5771,15 +5858,40 @@ function wireManualInvoice(actor, effectiveOp){
         const match = guessOperatorMatch(name, opsInTerminal);
         return { name, trips, matchedOperatorId: match ? match.id : null };
       });
-      MANUAL_IMPORT_PREVIEW = { terminalGuess: parsed.terminal, detectedPeriod: parsed.detectedPeriod, groups };
+      const { from: periodFrom, to: periodTo } = monthRange(parsed.detectedPeriod || VIEW.manualInvoice.period);
+      MANUAL_IMPORT_PREVIEW = { terminalGuess: parsed.terminal, detectedPeriod: parsed.detectedPeriod, periodSource: parsed.periodSource,
+        periodFrom, periodTo, periodEdited: false, groups };
       renderMain();
-      if(parsed.detectedPeriod) toast(`Detected period: ${fmtDate(monthRange(parsed.detectedPeriod).from)} – ${fmtDate(monthRange(parsed.detectedPeriod).to)}`);
+      if(parsed.detectedPeriod) toast(`Detected period: ${fmtDate(periodFrom)} – ${fmtDate(periodTo)} — change it in the preview if wrong`);
+      else toast('Could not detect the period — please key it in before importing.');
     }catch(err){ toast('Import failed: ' + err.message); }
     uploadFile.value = '';
   });
 
   const cancelImport = document.getElementById('btn-mi-cancel-import');
   if(cancelImport) cancelImport.addEventListener('click', ()=>{ MANUAL_IMPORT_PREVIEW=null; renderMain(); });
+
+  // Manual period override in the import preview. Keep the list below on the
+  // same month so already-saved invoices for that month are visible.
+  const setImportPeriod = (from, to)=>{
+    const p = MANUAL_IMPORT_PREVIEW;
+    p.periodFrom = from; p.periodTo = to; p.periodEdited = true;
+    if(from && from.slice(0,7) !== VIEW.manualInvoice.period){
+      VIEW.manualInvoice.period = from.slice(0,7);
+      MANUAL_INVOICES_LOADED_KEY = null; MANUAL_INVOICES_LOAD_ERROR = null;
+    }
+    renderMain();
+  };
+  const impMonth = document.getElementById('miImpMonth');
+  if(impMonth) impMonth.addEventListener('change', ()=>{
+    if(!impMonth.value) return;
+    const { from, to } = monthRange(impMonth.value);
+    setImportPeriod(from, to);
+  });
+  const impFrom = document.getElementById('miImpFrom');
+  const impTo = document.getElementById('miImpTo');
+  if(impFrom) impFrom.addEventListener('change', ()=> setImportPeriod(impFrom.value, MANUAL_IMPORT_PREVIEW.periodTo));
+  if(impTo) impTo.addEventListener('change', ()=> setImportPeriod(MANUAL_IMPORT_PREVIEW.periodFrom, impTo.value));
 
   document.querySelectorAll('[data-mi-map]').forEach(sel=>{
     sel.addEventListener('change', ()=>{
@@ -5790,7 +5902,10 @@ function wireManualInvoice(actor, effectiveOp){
 
   const doImport = document.getElementById('btn-mi-do-import');
   if(doImport) doImport.addEventListener('click', async ()=>{
-    const { from, to } = monthRange(VIEW.manualInvoice.period);
+    const { periodFrom: from, periodTo: to } = MANUAL_IMPORT_PREVIEW;
+    const isoOk = v => /^\d{4}-\d{2}-\d{2}$/.test(v||'') && +v.slice(0,4) >= 2000;
+    if(!isoOk(from) || !isoOk(to)){ toast('Please key in a valid invoice period before importing.'); return; }
+    if(from > to){ toast('Period "from" date is after the "to" date.'); return; }
     const terminalId = TERMINAL_IDS[VIEW.manualInvoice.terminal];
     let imported = 0;
     for(const g of MANUAL_IMPORT_PREVIEW.groups){
@@ -5807,12 +5922,14 @@ function wireManualInvoice(actor, effectiveOp){
           periodFrom: from, periodTo: to, rate, quantity, amount, rounding:0, grandTotal: amount,
           billToName: op.companyName || op.company, billToAddress: op.companyAddress || '', status:'draft'
         });
-        const trips = g.trips.map((t,idx)=>({ tripNo: t.no||idx+1, tripDate: t.dateIso, enter:t.enter, exit:t.exit, plate:t.plate, destination:t.destination }));
+        const trips = g.trips.map((t,idx)=>({ tripNo: t.no||idx+1, tripDate: t.dateIso || from, enter:t.enter, exit:t.exit, plate:t.plate, destination:t.destination }));
         await GoStatementLive.saveManualTripEntries(saved.id, trips);
         imported++;
       }catch(err){ console.error('import invoice failed', op.company, err); }
     }
     MANUAL_IMPORT_PREVIEW = null;
+    VIEW.manualInvoice.period = from.slice(0,7);
+    MANUAL_INVOICES_LOADED_KEY = null;
     toast(`Imported ${imported} manual invoice(s).`);
     await loadManualInvoicesForView();
   });
